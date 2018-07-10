@@ -4,7 +4,7 @@ with open('README.md') as f:
     long_description = f.read()
 
 setup(
-    name='benchbuild',
+    name='polyjit.experiments',
     use_scm_version=True,
     url='https://github.com/PolyJIT/polyjit.experiments',
     packages=find_packages(),
