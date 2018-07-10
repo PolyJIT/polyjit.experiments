@@ -20,7 +20,7 @@ install:
   - pip install pytest-cov
 
 env:
-  - BB_DB_BB_UNIONFS_ENABLE=false BB_DB_CONNECT_STRING="sqlite:///"
+  - BB_DB_BB_UNIONFS_ENABLE=false
 
 script:
   - pytest --cov=./ `which benchbuild` tests

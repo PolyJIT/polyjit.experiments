@@ -8,7 +8,7 @@ setup(
     use_scm_version=True,
     url='https://github.com/PolyJIT/polyjit.experiments',
     packages=find_packages(),
-    setup_requires=["setuptools_scm"],
+    setup_requires=["pytest-runner", "setuptools_scm"],
     tests_require=["pytest"],
     install_requires=["benchbuild>=3.3.0"],
     author="Andreas Simbuerger",
