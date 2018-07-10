@@ -24,13 +24,14 @@ install:
   - pip install pytest-cov
 
 env:
-  - BB_UNIONFS_ENABLE=false
+  - BB_UNIONFS_ENABLE=false BB_PLUGINS_EXPERIMENTS='["benchbuild.experiments.raw", "benchbuild.experiments.empty"]';
+
 
 before_script:
   - psql -c 'create database pprof;' -U postgres
 
 script:
-  - pytest --cov=./ benchbuild tests
+  - pytest --cov=./ `which benchbuild` tests
   - coverage run -a `which benchbuild` config view
   - coverage run -a `which benchbuild` project view
   - coverage run -a `which benchbuild` experiment view
