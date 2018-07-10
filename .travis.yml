@@ -1,0 +1,43 @@
+sudo: false
+dist: trusty
+language: python
+python:
+  - "3.5"
+  - "3.6"
+
+addons:
+  postgresql: "9.4"
+  apt:
+    packages:
+      - time
+      - unionfs-fuse
+      - libfuse-dev
+      - clang
+
+services:
+  - postgresql
+
+install:
+  - pip install .
+  - pip install -r requirements.txt
+  - pip install codecov
+  - pip install pytest-cov
+
+env:
+  - BB_UNIONFS_ENABLE=false
+
+before_script:
+  - psql -c 'create database pprof;' -U postgres
+
+script:
+  - pytest --cov=./ benchbuild tests
+  - coverage run -a `which benchbuild` config view
+  - coverage run -a `which benchbuild` project view
+  - coverage run -a `which benchbuild` experiment view
+  - coverage run -a `which benchbuild` bootstrap -s
+  - coverage run -a `which benchbuild` -vvvvv run --full -P test -p
+  - codecov
+
+branches:
+  only:
+    - master
