@@ -9,8 +9,20 @@ by llvm.
 import sqlalchemy as sa
 
 import benchbuild.extensions as ext
+import benchbuild.settings as settings
 import benchbuild.utils.schema as schema
 from benchbuild.experiment import Experiment
+
+settings.CFG["cs"] = {
+    "components": {
+        "default": None,
+        "desc": "List of filters for compilestats components."
+    },
+    "names": {
+        "default": None,
+        "desc": "List of filters for compilestats names."
+    }
+}
 
 
 class CompileStat(schema.BASE):

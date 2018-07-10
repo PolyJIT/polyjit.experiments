@@ -1,29 +1,21 @@
 """
-The 'polly' Experiment
-====================
-
-This experiment applies polly's transformations to all projects and measures
-the runtime.
-
-This forms the baseline numbers for the other experiments.
-
-
-Measurements
-------------
-
-3 Metrics are generated during this experiment:
-    time.user_s - The time spent in user space in seconds (aka virtual time)
-    time.system_s - The time spent in kernel space in seconds (aka system time)
-    time.real_s - The time spent overall in seconds (aka Wall clock)
+PollyPerformance experiment.
 """
-import warnings
 import copy
-import uuid
 import re
+import uuid
+import warnings
 
+import benchbuild.settings as settings
 from benchbuild.experiment import Experiment
-from benchbuild.extensions import RunWithTime, RuntimeExtension
-from benchbuild.settings import CFG
+from benchbuild.extensions import RuntimeExtension, RunWithTime
+
+settings.CFG["perf"] = {
+    "config": {
+        "default": None,
+        "desc": "A configuration for the pollyperformance experiment."
+    }
+}
 
 
 class ShouldNotBeNone(RuntimeWarning):
@@ -36,10 +28,10 @@ class PollyPerformance(Experiment):
     NAME = "pollyperformance"
 
     def actions_for_project(self, project):
-        configs = CFG["perf"]["config"].value()
+        configs = settings.CFG["perf"]["config"].value()
         if configs is None:
             warnings.warn("({0}) should not be null.".format(
-                repr(CFG["perf"]["config"])),
+                repr(settings.CFG["perf"]["config"])),
                           category=ShouldNotBeNone, stacklevel=2)
             return
 
@@ -56,7 +48,7 @@ class PollyPerformance(Experiment):
                           "-mllvm", "-polly"] + config_with_llvm
 
         actns = []
-        jobs = CFG["jobs"].value()
+        jobs = settings.CFG["jobs"].value()
         for i in range(1, int(jobs)):
             cp = copy.deepcopy(project)
             cp.run_uuid = uuid.uuid4()

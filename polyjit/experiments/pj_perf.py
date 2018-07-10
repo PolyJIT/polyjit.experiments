@@ -4,10 +4,9 @@ import functools as ft
 import os
 import uuid
 
-import polyjit.experiments.polyjit as pj
-
 from plumbum import local
 
+import polyjit.experiments.polyjit as pj
 
 def run_with_perf(project, experiment, config, jobs, run_f, args, **kwargs):
     """
