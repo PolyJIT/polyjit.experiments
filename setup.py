@@ -10,7 +10,7 @@ setup(
     packages=find_packages(),
     setup_requires=["setuptools_scm"],
     tests_require=["pytest"],
-    install_requires=["benchbuild==3.2.0"],
+    install_requires=["benchbuild==3.3.0"],
     author="Andreas Simbuerger",
     author_email="simbuerg@fim.uni-passau.de",
     description="Additional experiments used by PolyJIT with BenchBuild.",
