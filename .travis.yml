@@ -6,16 +6,12 @@ python:
   - "3.6"
 
 addons:
-  postgresql: "9.4"
   apt:
     packages:
       - time
       - unionfs-fuse
       - libfuse-dev
       - clang
-
-services:
-  - postgresql
 
 install:
   - pip install .
@@ -24,11 +20,7 @@ install:
   - pip install pytest-cov
 
 env:
-  - BB_UNIONFS_ENABLE=false BB_PLUGINS_EXPERIMENTS='["benchbuild.experiments.raw", "benchbuild.experiments.empty"]';
-
-
-before_script:
-  - psql -c 'create database pprof;' -U postgres
+  - BB_DB_BB_UNIONFS_ENABLE=false BB_DB_CONNECT_STRING="sqlite:///"
 
 script:
   - pytest --cov=./ `which benchbuild` tests
