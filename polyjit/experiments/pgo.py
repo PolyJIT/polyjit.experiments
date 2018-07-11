@@ -1,5 +1,8 @@
+import glob
 import logging
+import os
 
+import attr
 import sqlalchemy as sa
 
 import benchbuild.experiment as exp
@@ -7,24 +10,133 @@ import benchbuild.extensions as ext
 import benchbuild.utils.actions as actns
 import benchbuild.utils.schema as schema
 
+from benchbuild.utils.cmd import llvm_profdata
+from plumbum import local
+
 LOG = logging.getLogger(__name__)
 
-__FILECONTENT__ = sa.Table(
-    'filecontents', schema.metadata(),
-    sa.Column(
-        'experience_id',
+
+class FileContent(schema.BASE):
+    __tablename__ = 'filecontents'
+
+    experience_id = sa.Column(
         schema.GUID,
         sa.ForeignKey("experiment.id", onupdate="CASCADE", ondelete="CASCADE"),
         nullable=False,
-        primary_key=True),
-    sa.Column(
-        'rungroup_id',
+        primary_key=True)
+    rungroup_id = sa.Column(
         schema.GUID,
         sa.ForeignKey("rungroup.id", onupdate="CASCADE", ondelete="CASCADE"),
         nullable=False,
-        primary_key=True),
-    sa.Column('filename', sa.String, nullable=False, primary_key=True),
-    sa.Column('content', sa.LargeBinary))
+        primary_key=True)
+    filename = sa.Column(sa.String, nullable=False, primary_key=True)
+    content = sa.Column(sa.LargeBinary)
+
+
+def persist_file(f, experiment_id, run_group):
+    """
+    Persist a file in the FileContent relation.
+
+    Args:
+        f (str):
+            The filename we want to persist.
+        experiment_id (uuid):
+            The experiment uuid this file needs to be assigned to.
+        run_group (uuid):
+            The run group uuid this file needs to be assigned to.
+    """
+    from benchbuild.utils.schema import Session
+    import pathlib
+    session = Session()
+
+    filename = os.path.basename(f)
+    filepath = pathlib.Path(f)
+    session = Session()
+    session.add(
+        FileContent(
+            experience_id=experiment_id,
+            rungroup_id=run_group,
+            filename=filename,
+            content=filepath.read_bytes()))
+    session.commit()
+
+
+def extract_file(filename, outfile, exp_id, run_group):
+    """
+    Extract a previously stored file from the database.
+
+    Args:
+        filename (str):
+            The name of the file associated to the content in the database.
+        outfile (str):
+            The filepath we want to store the content to.
+        exp_id (uuid):
+            The experiment uuid the file was stored in.
+        run_group (uuid):
+            The run_group the file was stored in.
+    """
+    from benchbuild.utils.schema import Session
+    import pathlib
+
+    session = Session()
+    result = session.query(FileContent.__table__).get((exp_id, run_group, filename))
+    if result:
+        filepath = pathlib.Path(outfile)
+        filepath.write_bytes(result.content)
+    else:
+        LOG.error("No file found in database.")
+
+
+@attr.s
+class SaveProfile(actns.Step):
+    NAME = "SAVEPROFILE"
+    DESCRIPTION = "Save a profile in llvm format in the DB"
+
+    filename = attr.ib(default=None)
+
+    @actns.notify_step_begin_end
+    def __call__(self):
+        from benchbuild.project import Project
+        if not isinstance(self.obj, Project):
+            raise AttributeError
+
+        obj_builddir = self.obj.builddir
+        outfile = os.path.abspath(os.path.join(obj_builddir, self.filename))
+        profiles = os.path.abspath(os.path.join(obj_builddir, "raw-profiles"))
+        with local.cwd(profiles):
+            merge_profdata = llvm_profdata["merge", "-output={}".format(
+                outfile)]
+            merge_profdata = merge_profdata[glob.glob('default_*.profraw')]
+            merge_profdata()
+
+        exp_id = self.obj.experiment.id
+        run_group = self.obj.run_uuid
+
+        persist_file(outfile, exp_id, run_group)
+        self.status = actns.StepResult.OK
+
+
+@attr.s
+class RetrieveFile(actns.Step):
+    NAME = "RETRIEVEFILE"
+    DESCRIPTION = "Retrieve a file from the database"
+
+    filename = attr.ib(default=None)
+    run_group = attr.ib(default=None)
+
+    @actns.notify_step_begin_end
+    def __call__(self):
+        from benchbuild.project import Project
+
+        if not isinstance(self.obj, Project):
+            raise AttributeError
+
+        obj_builddir = self.obj.builddir
+        outfile = os.path.abspath(os.path.join(obj_builddir, self.filename))
+        exp_id = self.obj.experiment.id
+        extract_file(self.filename, outfile, exp_id, self.run_group)
+
+        self.status = actns.StepResult.OK
 
 
 class PGO(exp.Experiment):
@@ -44,7 +156,7 @@ class PGO(exp.Experiment):
                     from the database, INST).
     """
     NAME = "pgo"
-    SCHEMA = [__FILECONTENT__]
+    SCHEMA = [FileContent.__table__]
 
     def actions_for_project(self, project):
         import copy

@@ -31,7 +31,7 @@ class RunWithLikwid(ext.RuntimeExtension):
     """
 
     def __call__(self, binary_command, *args, may_wrap=True, **kwargs):
-        from benchbuild.utils.db import persist_likwid, persist_config
+        from benchbuild.utils.db import persist_config
         from benchbuild.likwid import get_likwid_perfctr
         from benchbuild.utils.cmd import rm
         from benchbuild.utils.cmd import likwid_perfctr
@@ -63,27 +63,35 @@ class RunWithLikwid(ext.RuntimeExtension):
         return res
 
 
-__LIKWID__ = sa.schema.Table('likwid', schema.metadata(),
-                             sa.Column(
-                                 'metric',
-                                 sa.String,
-                                 primary_key=True,
-                                 index=True),
-                             sa.Column(
-                                 'region',
-                                 sa.String,
-                                 primary_key=True,
-                                 index=True), sa.Column('value', sa.Float),
-                             sa.Column('core', sa.String, primary_key=True),
-                             sa.Column(
-                                 'run_id',
-                                 sa.Integer,
-                                 sa.ForeignKey(
-                                     'run.id',
-                                     onupdate='CASCADE',
-                                     ondelete='CASCADE'),
-                                 nullable=False,
-                                 primary_key=True))
+class Likwid(schema.BASE):
+    __tablename__ = 'likwid'
+
+    metric = sa.Column(sa.String, primary_key=True, index=True)
+    region = sa.Column(sa.String, primary_key=True, index=True)
+    value = sa.Column(sa.Float)
+    core = sa.Column(sa.String, primary_key=True)
+    run_id = sa.Column(
+        sa.Integer,
+        sa.ForeignKey('run.id', onupdate='CASCADE', ondelete='CASCADE'),
+        nullable=False,
+        primary_key=True)
+
+
+def persist_likwid(run, session, measurements):
+    """
+    Persist all likwid results.
+
+    Args:
+        run: The run we attach our measurements to.
+        session: The db transaction we belong to.
+        measurements: The likwid measurements we want to store.
+    """
+    from benchbuild.utils import schema as s
+
+    for (region, name, core, value) in measurements:
+        db_measurement = Likwid(
+            metric=name, region=region, value=value, core=core, run_id=run.id)
+        session.add(db_measurement)
 
 
 class PJITlikwid(pj.PolyJIT):
@@ -97,7 +105,7 @@ class PJITlikwid(pj.PolyJIT):
     """
 
     NAME = "pj-likwid"
-    SCHEMA = [__LIKWID__]
+    SCHEMA = [Likwid.__table__]
 
     def actions_for_project(self, project):
         from benchbuild.settings import CFG
