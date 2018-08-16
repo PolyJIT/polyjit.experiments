@@ -16,7 +16,7 @@ import benchbuild.extensions as ext
 import benchbuild.reports as reports
 import benchbuild.utils.schema as schema
 from polyjit.experiments.polyjit import (
-    ClearPolyJITConfig, EnableJITDatabase, RegisterPolyJITLogs)
+    ClearPolyJITConfig, EnableJITTracking, RegisterPolyJITLogs)
 from benchbuild.extensions import Extension
 
 LOG = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ class PProfExperiment(exp.Experiment):
             << ext.RunWithTime() \
             << RunWithPprofExperiment(config={"jobs": 1}) \
             << EnableProfiling() \
-            << EnableJITDatabase(project=project) \
+            << EnableJITTracking(project=project) \
             << ClearPolyJITConfig() \
             << RegisterPolyJITLogs() \
             << ext.LogAdditionals()

@@ -12,31 +12,28 @@ import uuid
 from abc import abstractmethod
 
 import sqlalchemy as sa
-from plumbum import local
+import yaml
 
 import benchbuild.extensions as ext
 import benchbuild.utils.schema as schema
+import polyjit.experiments.papi as papi
 from benchbuild.experiment import Experiment
 from benchbuild.utils.actions import Any, RequireAll
 from benchbuild.utils.dict import ExtensibleDict, extend_as_list
-import polyjit.experiments.papi as papi
+from plumbum import local
 
 LOG = logging.getLogger(__name__)
 
-__REGIONS__ = sa.Table('regions', schema.metadata(),
-                       sa.Column(
-                           'run_id',
-                           sa.Integer,
-                           sa.ForeignKey(
-                               "run.id",
-                               onupdate="CASCADE",
-                               ondelete="CASCADE"),
-                           index=True,
-                           primary_key=True), sa.Column(
-                               'duration', sa.Numeric),
-                       sa.Column('id', sa.Numeric, primary_key=True),
-                       sa.Column('name', sa.String),
-                       sa.Column('events', sa.BigInteger))
+__REGIONS__ = sa.Table(
+    'regions', schema.metadata(),
+    sa.Column(
+        'run_id',
+        sa.Integer,
+        sa.ForeignKey("run.id", onupdate="CASCADE", ondelete="CASCADE"),
+        index=True,
+        primary_key=True), sa.Column('duration', sa.Numeric),
+    sa.Column('id', sa.Numeric, primary_key=True), sa.Column(
+        'name', sa.String), sa.Column('events', sa.BigInteger))
 
 
 def verbosity_to_polyjit_log_level(verbosity: int):
@@ -82,48 +79,113 @@ class ClearPolyJITConfig(PolyJITConfig, ext.Extension):
         return self.call_next(*args, **kwargs)
 
 
-class EnableJITDatabase(PolyJITConfig, ext.Extension):
+class CollectMetrics(PolyJITConfig, ext.Extension):
+    def __init__(self, *extensions, project=None, **kwargs):
+        self.project = project
+        super(CollectMetrics, self).__init__(*extensions, **kwargs)
+
+    def metrics_to_db(self, stored_file):
+        if not os.path.exists(stored_file):
+            LOG.error("Could not find the stored metrics.")
+
+        with open(stored_file, 'r') as yaml_out:
+            metrics = yaml.safe_load(yaml_out)
+
+        events = {
+            e['region-id']: {
+                'event': e['value']
+            }
+            for e in metrics['events']
+        }
+        entries = {
+            e['region-id']: {
+                'entry': e['value']
+            }
+            for e in metrics['entries']
+        }
+        regions = {
+            e['region-id']: {
+                'region': e['region-name']
+            }
+            for e in metrics['regions']
+        }
+
+        merged = events
+        for k in events:
+            merged[k].update(entries[k])
+            merged[k].update(regions[k])
+
+        run_id = metrics['RunID']
+        session = schema.Session()
+        for k, v in merged.items():
+            db_insert = __REGIONS__.insert().values({
+                'run_id': run_id,
+                'id': k,
+                'name': v['region'],
+                'duration': v['event'],
+                'events': v['entry']
+            })
+            session.execute(db_insert)
+        session.commit()
+
+    def __call__(self, binary_command, *args, **kwargs):
+        builddir = self.project.builddir
+        outfile = 'polyjit.{0}.metadata.yml'.format(self.project.name)
+        outfile = os.path.join(os.path.abspath(builddir), outfile)
+        pjit_args = ["-polli-track-metrics-outfile='{:s}'".format(outfile)]
+        with self.argv(PJIT_ARGS=pjit_args):
+            res = self.call_next(binary_command, *args, **kwargs)
+
+        self.metrics_to_db(outfile)
+        return res
+
+
+class CollectScopMetadata(PolyJITConfig, ext.Extension):
+    def __init__(self, *extensions, project=None, **kwargs):
+        self.project = project
+        super(CollectScopMetadata, self).__init__(*extensions, **kwargs)
+
+    def __call__(self, binary_command, *args, **kwargs):
+        builddir = self.project.builddir
+        outfile = 'polyjit.{0}.metadata.yml'.format(self.project.name)
+        outfile = os.path.join(os.path.abspath(builddir), outfile)
+        pjit_args = [
+            "-polli-track-scop-metadata-outfile='{:s}'".format(outfile)
+        ]
+        with self.argv(PJIT_ARGS=pjit_args):
+            res = self.call_next(binary_command, *args, **kwargs)
+
+        # Load & Parse outfile into the database.
+        # TODO
+        return res
+
+
+class EnableJITTracking(PolyJITConfig, ext.Extension):
     """The run and given extensions store polli's statistics to the database."""
 
     def __init__(self, *args, project=None, **kwargs):
         """Initialize the db object for the JIT."""
-        super(EnableJITDatabase, self).__init__(
+        super(EnableJITTracking, self).__init__(
             *args, project=project, **kwargs)
         self.project = project
 
     def __call__(self, binary_command, *args, **kwargs):
         from benchbuild.settings import CFG
         experiment = self.project.experiment
-
-        def deconstruct(connect_str):
-            """Deconstruct a full PostgreSQL connect_str."""
-            from parse import parse
-            res = parse("{dialect}://{user}:{password}@{host}:{port}/{name}",
-                        connect_str)
-            return (res['dialect'], res['user'], res['password'], res['host'],
-                    res['port'], res['name'])
-
-        _, user, password, host, port, name = \
-            deconstruct(CFG["db"]["connect_string"].value())
         pjit_args = [
-            "-polli-db-experiment='{:s}'".format(experiment.name),
-            "-polli-db-experiment-uuid='{:s}'".format(str(experiment.id)),
-            "-polli-db-argv='{:s}'".format(str(binary_command)),
-            "-polli-db-host='{:s}'".format(host),
-            "-polli-db-port={:s}".format(port),
-            "-polli-db-username={:s}".format(user),
-            "-polli-db-password={:s}".format(password),
-            "-polli-db-name='{:s}'".format(name),
+            "-polli-experiment='{:s}'".format(experiment.name),
+            "-polli-experiment-uuid='{:s}'".format(str(experiment.id)),
+            "-polli-argv='{:s}'".format(str(binary_command))
         ]
 
         if self.project is not None:
             pjit_args.extend([
-                "-polli-db-enable",
-                "-polli-db-project='%s'" % self.project.name,
-                "-polli-db-domain='%s'" % self.project.domain,
-                "-polli-db-group='%s'" % self.project.group,
-                "-polli-db-src-uri='%s'" % self.project.src_file,
-                "-polli-db-run-group='%s'" % self.project.run_uuid
+                "-polli-track",
+                "-polli-project='%s'" % self.project.name,
+                "-polli-domain='%s'" % self.project.domain,
+                "-polli-group='%s'" % self.project.group,
+                "-polli-src-uri='%s'" % self.project.src_file,
+                "-polli-run-group='%s'" % self.project.run_uuid
             ])
         else:
             LOG.error("Project was not set."
@@ -253,21 +315,21 @@ class PolyJITSimple(PolyJIT):
         ]
 
         cfg = {
-            "cflags": project.cflags,
+            "cflags": ' '.join(project.cflags),
             "recompilation": "enabled",
             "specialization": "enabled"
         }
 
-        pjit_extension = \
+        project.runtime_extension = \
             ext.RuntimeExtension(project, self, config=cfg) \
             << EnablePolyJIT() \
-            << EnableJITDatabase(project=project) \
+            << CollectMetrics(project=project) \
+            << EnableJITTracking(project=project) \
             << RegisterPolyJITLogs() \
             << ext.LogAdditionals() \
             << ClearPolyJITConfig() \
             << ext.RunWithTime()
 
-        project.runtime_extension = ext.RunWithTime(pjit_extension)
         return PolyJITSimple.default_runtime_actions(project)
 
 
@@ -329,7 +391,7 @@ class PolyJITFull(PolyJIT):
                 ext.RuntimeExtension(cp, self, config=cfg) \
                 << ext.SetThreadLimit(config=cfg) \
                 << DisablePolyJIT() \
-                << EnableJITDatabase(project=cp) \
+                << EnableJITTracking(project=cp) \
                 << ClearPolyJITConfig() \
                 << ext.RunWithTime() \
                 << RegisterPolyJITLogs() \
@@ -351,7 +413,7 @@ class PolyJITFull(PolyJIT):
                 ext.RuntimeExtension(cp, self, config=cfg) \
                 << ext.SetThreadLimit(config=cfg) \
                 << EnablePolyJIT() \
-                << EnableJITDatabase(project=cp) \
+                << EnableJITTracking(project=cp) \
                 << ClearPolyJITConfig() \
                 << RegisterPolyJITLogs() \
                 << ext.LogAdditionals()

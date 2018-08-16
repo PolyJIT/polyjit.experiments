@@ -59,13 +59,13 @@ class Test(pj.PolyJIT):
         pjit_extension = ext.Extension(
                 ext.RuntimeExtension(project, self, config=cfg_with_jit) \
                 << pj.EnablePolyJIT() \
-                << pj.EnableJITDatabase(project=project) \
+                << pj.EnableJITTracking(project=project) \
                 << pj.RegisterPolyJITLogs() \
                 << ext.LogAdditionals() \
                 << pj.ClearPolyJITConfig(),
                 ext.RuntimeExtension(project, self, config=cfg_without_jit) \
                 << pj.DisablePolyJIT() \
-                << pj.EnableJITDatabase(project=project) \
+                << pj.EnableJITTracking(project=project) \
                 << pj.RegisterPolyJITLogs() \
                 << ext.LogAdditionals() \
                 << pj.ClearPolyJITConfig()
@@ -134,12 +134,12 @@ class JitExportGeneratedCode(pj.PolyJIT):
             pj.ClearPolyJITConfig(
                 ext.LogAdditionals(
                     pj.RegisterPolyJITLogs(
-                        pj.EnableJITDatabase(
+                        pj.EnableJITTracking(
                             EnableDBExport(enable_jit), project=project)))),
             pj.ClearPolyJITConfig(
                 ext.LogAdditionals(
                     pj.RegisterPolyJITLogs(
-                        pj.EnableJITDatabase(
+                        pj.EnableJITTracking(
                             EnableDBExport(disable_jit), project=project)))))
 
         project.runtime_extension = ext.RunWithTime(pjit_extension)
