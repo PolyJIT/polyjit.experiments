@@ -148,51 +148,30 @@ class IJPP(pj.PolyJIT):
         ]
 
 
-__SCHEDULE__ = sa.Table('schedules', schema.metadata(),
-                        sa.Column(
-                            'function',
-                            sa.String,
-                            primary_key=True,
-                            index=True,
-                            nullable=False),
-                        sa.Column(
-                            'schedule',
-                            sa.String,
-                            primary_key=True,
-                            index=True,
-                            nullable=False),
-                        sa.Column(
-                            'run_id',
-                            sa.Integer,
-                            sa.ForeignKey(
-                                'run.id',
-                                onupdate='CASCADE',
-                                ondelete='CASCADE'),
-                            index=True,
-                            primary_key=True))
+__SCHEDULE__ = sa.Table(
+    'schedules', schema.metadata(),
+    sa.Column(
+        'function', sa.String, primary_key=True, index=True, nullable=False),
+    sa.Column(
+        'schedule', sa.String, primary_key=True, index=True, nullable=False),
+    sa.Column(
+        'run_id',
+        sa.Integer,
+        sa.ForeignKey('run.id', onupdate='CASCADE', ondelete='CASCADE'),
+        index=True,
+        primary_key=True))
 
-__ISL_AST__ = sa.Table('isl_asts', schema.metadata(),
-                       sa.Column(
-                           'function',
-                           sa.String,
-                           primary_key=True,
-                           index=True,
-                           nullable=False),
-                       sa.Column(
-                           'ast',
-                           sa.String,
-                           primary_key=True,
-                           index=True,
-                           nullable=False),
-                       sa.Column(
-                           'run_id',
-                           sa.Integer,
-                           sa.ForeignKey(
-                               'run.id',
-                               onupdate='CASCADE',
-                               ondelete='CASCADE'),
-                           index=True,
-                           primary_key=True))
+__ISL_AST__ = sa.Table(
+    'isl_asts', schema.metadata(),
+    sa.Column(
+        'function', sa.String, primary_key=True, index=True, nullable=False),
+    sa.Column('ast', sa.String, primary_key=True, index=True, nullable=False),
+    sa.Column(
+        'run_id',
+        sa.Integer,
+        sa.ForeignKey('run.id', onupdate='CASCADE', ondelete='CASCADE'),
+        index=True,
+        primary_key=True))
 
 
 class EnableDBExport(pj.PolyJITConfig, ext.Extension):
