@@ -32,7 +32,7 @@ class IJPP(pj.PolyJIT):
     """Experiments and evaluation used for IJPP Journal."""
 
     NAME = "ijpp"
-    SCHEMA = [pj.__REGIONS__, papi.Event.__table__]
+    SCHEMA = [papi.Event.__table__]
 
     def actions_for_project(self, project):
         jobs = int(settings.CFG["jobs"].value())
@@ -58,6 +58,8 @@ class IJPP(pj.PolyJIT):
             }) \
             << pj.EnablePolyJIT_Opt() \
             << pj.EnableJITTracking(project=project) \
+            << pj.CollectMetrics(project=project) \
+            << pj.PolyJITMetrics() \
             << pj.RegisterPolyJITLogs() \
             << pj.ClearPolyJITConfig()
 
@@ -68,6 +70,8 @@ class IJPP(pj.PolyJIT):
             }) \
             << pj.EnablePolyJIT() \
             << pj.EnableJITTracking(project=project) \
+            << pj.CollectMetrics(project=project) \
+            << pj.PolyJITMetrics() \
             << pj.RegisterPolyJITLogs() \
             << pj.ClearPolyJITConfig()
 
@@ -78,6 +82,8 @@ class IJPP(pj.PolyJIT):
             }) \
             << pj.DisablePolyJIT() \
             << pj.EnableJITTracking(project=project) \
+            << pj.CollectMetrics(project=project) \
+            << pj.PolyJITMetrics() \
             << pj.RegisterPolyJITLogs() \
             << pj.ClearPolyJITConfig()
 
@@ -89,6 +95,8 @@ class IJPP(pj.PolyJIT):
             << pj.DisableDelinearization() \
             << pj.EnablePolyJIT() \
             << pj.EnableJITTracking(project=project) \
+            << pj.CollectMetrics(project=project) \
+            << pj.PolyJITMetrics() \
             << pj.RegisterPolyJITLogs() \
             << pj.ClearPolyJITConfig()
 
@@ -100,6 +108,8 @@ class IJPP(pj.PolyJIT):
             << pj.DisableDelinearization() \
             << pj.DisablePolyJIT() \
             << pj.EnableJITTracking(project=project) \
+            << pj.CollectMetrics(project=project) \
+            << pj.PolyJITMetrics() \
             << pj.RegisterPolyJITLogs() \
             << pj.ClearPolyJITConfig()
 

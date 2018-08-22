@@ -13,7 +13,6 @@ from abc import abstractmethod
 
 import sqlalchemy as sa
 import yaml
-import pandas as pd
 
 import benchbuild.extensions as ext
 import benchbuild.utils.schema as schema
@@ -25,17 +24,6 @@ from benchbuild.utils.run import RunInfo
 from plumbum import local
 
 LOG = logging.getLogger(__name__)
-
-__REGIONS__ = sa.Table(
-    'regions', schema.metadata(),
-    sa.Column(
-        'run_id',
-        sa.Integer,
-        sa.ForeignKey("run.id", onupdate="CASCADE", ondelete="CASCADE"),
-        index=True,
-        primary_key=True), sa.Column('duration', sa.Numeric),
-    sa.Column('id', sa.Numeric, primary_key=True), sa.Column(
-        'name', sa.String), sa.Column('events', sa.BigInteger))
 
 
 class PJ_Result(schema.BASE):
@@ -56,7 +44,7 @@ class PJ_Result(schema.BASE):
     }
 
 
-class PJ_Result_Region(schema.BASE):
+class PJ_Result_Region(PJ_Result):
     __tablename__ = 'polyjit_region_result'
     id = sa.Column(
         sa.Integer,
@@ -64,7 +52,8 @@ class PJ_Result_Region(schema.BASE):
             'polyjit_result.id',
             primary_key=True,
             onupdate="CASCADE",
-            ondelete="CASCADE"))
+            ondelete="CASCADE"),
+        primary_key=True)
     region_name = sa.Column(sa.String)
     __mapper_args__ = {'polymorphic_identity': 'region'}
 
@@ -113,12 +102,8 @@ class ClearPolyJITConfig(PolyJITConfig, ext.Extension):
 
 
 class PolyJITMetrics(ext.Extension):
-    def evaluate(self, run_info: RunInfo):
-        payload = run_info.payload
-        run_id = run_info.db_run.id
-        config = payload['config']
+    def merge_results(self, payload):
         metrics = payload['pj.metrics']
-
         events = {
             e['region-id']: {
                 'event': e['value']
@@ -143,24 +128,79 @@ class PolyJITMetrics(ext.Extension):
             merged[k].update(entries[k])
             merged[k].update(regions[k])
 
-        # T_All
-        # T_SCoPs
-        # T_CodeGen
-        # CacheHits
-        # Variants
-        # Requests
-        # Blocked
-        def yield_by_region(region_name, merged_metrics):
+        return merged
+
+    def evaluate(self, run_info: RunInfo):
+        payload = run_info.payload
+        run_id = run_info.db_run.id
+        config = payload['config']
+        merged = self.merge_results(payload)
+
+        def yield_in_region(regions, merged_metrics):
             for value in merged_metrics.values():
-                if value['region'] == region_name:
+                if value['region'] in regions:
                     yield value['event']
 
-        for time in yield_by_region('START', merged):
-            t_all = PJ_Result(
-                config=config.get('name', default=None),
-                name='t_all',
-                run_id=run_id,
-                value = time)
+        def yield_not_in_region(regions, merged_metrics):
+            for value in merged_metrics.values():
+                if value['region'] not in regions:
+                    yield value['event']
+
+        def yield_not_in_region_rw(regions, merged_metrics):
+            for value in merged_metrics.values():
+                if value['region'] not in regions:
+                    yield (value['region'], value['event'])
+
+        def create_results(session,
+                           merged_metrics,
+                           name,
+                           *regions,
+                           subset_fn=yield_in_region,
+                           aggr_fn=sum):
+            cfg = config.get('name', None)
+            value = aggr_fn(subset_fn(regions, merged_metrics))
+            session.add(
+                PJ_Result(config=cfg, name=name, run_id=run_id, value=value))
+
+        def create_rw_results(session,
+                              merged_metrics,
+                              name,
+                              *regions,
+                              subset_fn=yield_not_in_region_rw):
+            cfg = config.get('name', None)
+            for region, value in subset_fn(regions, merged_metrics):
+                session.add(
+                    PJ_Result_Region(
+                        config=cfg,
+                        name=name,
+                        run_id=run_id,
+                        value=value,
+                        region_name=region))
+
+        meta_regions = [
+            'START', 'CODEGEN', 'CACHE_HIT', 'VARIANTS', 'BLOCKED', 'REQUESTS'
+        ]
+        session = schema.Session()
+        create_results(session, merged, 't_all', 'START')
+        create_results(session, merged, 't_codegen', 'CODEGEN')
+        create_results(session, merged, 'n_cachehits', 'CACHE_HIT')
+        create_results(session, merged, 'n_variants', 'VARIANTS')
+        create_results(session, merged, 'n_blocked', 'BLOCKED')
+        create_results(session, merged, 'n_requests', 'REQUESTS')
+        create_results(
+            session,
+            merged,
+            't_scops',
+            *meta_regions,
+            subset_fn=yield_not_in_region)
+        create_rw_results(
+            session,
+            merged,
+            't_region',
+            *meta_regions,
+            subset_fn=yield_not_in_region_rw)
+
+        session.commit()
 
     def payloads(self, name, results):
         valid_results = [e for e in results if e.payload and name in e.payload]
@@ -190,42 +230,6 @@ class CollectMetrics(PolyJITConfig, ext.Extension):
             metrics = yaml.safe_load(yaml_out)
 
         run_info.add_payload("pj.metrics", metrics)
-
-        events = {
-            e['region-id']: {
-                'event': e['value']
-            }
-            for e in metrics['events']
-        }
-        entries = {
-            e['region-id']: {
-                'entry': e['value']
-            }
-            for e in metrics['entries']
-        }
-        regions = {
-            e['region-id']: {
-                'region': e['region-name']
-            }
-            for e in metrics['regions']
-        }
-
-        merged = events
-        for k in events:
-            merged[k].update(entries[k])
-            merged[k].update(regions[k])
-
-        session = schema.Session()
-        for k, v in merged.items():
-            db_insert = __REGIONS__.insert().values({
-                'run_id': run_id,
-                'id': k,
-                'name': v['region'],
-                'duration': v['event'],
-                'events': v['entry']
-            })
-            session.execute(db_insert)
-        session.commit()
 
     def __call__(self, *args, **kwargs):
         builddir = self.project.builddir
@@ -274,7 +278,6 @@ class EnableJITTracking(PolyJITConfig, ext.Extension):
         self.project = project
 
     def __call__(self, binary_command, *args, **kwargs):
-        from benchbuild.settings import CFG
         pjit_args = ["-polli-track"]
 
         if self.project is None:
@@ -390,7 +393,7 @@ class PolyJIT(Experiment):
 class PolyJITSimple(PolyJIT):
     """Simple runtime-testing with PolyJIT."""
     NAME = "pj-simple"
-    SCHEMA = [__REGIONS__, papi.Event.__table__]
+    SCHEMA = [papi.Event.__table__]
 
     def actions_for_project(self, project):
         from benchbuild.settings import CFG
@@ -432,7 +435,7 @@ class PolyJITFull(PolyJIT):
     """
 
     NAME = "pj"
-    SCHEMA = [__REGIONS__, papi.Event.__table__]
+    SCHEMA = [papi.Event.__table__]
 
     def actions_for_project(self, project):
         from benchbuild.settings import CFG
