@@ -13,6 +13,7 @@ from abc import abstractmethod
 
 import sqlalchemy as sa
 import yaml
+import pandas as pd
 
 import benchbuild.extensions as ext
 import benchbuild.utils.schema as schema
@@ -20,6 +21,7 @@ import polyjit.experiments.papi as papi
 from benchbuild.experiment import Experiment
 from benchbuild.utils.actions import Any, RequireAll
 from benchbuild.utils.dict import ExtensibleDict, extend_as_list
+from benchbuild.utils.run import RunInfo
 from plumbum import local
 
 LOG = logging.getLogger(__name__)
@@ -34,6 +36,37 @@ __REGIONS__ = sa.Table(
         primary_key=True), sa.Column('duration', sa.Numeric),
     sa.Column('id', sa.Numeric, primary_key=True), sa.Column(
         'name', sa.String), sa.Column('events', sa.BigInteger))
+
+
+class PJ_Result(schema.BASE):
+    __tablename__ = 'polyjit_result'
+    id = sa.Column(sa.Integer, primary_key=True)
+    run_id = sa.Column(
+        sa.Integer,
+        sa.ForeignKey("run.id", onupdate="CASCADE", ondelete="CASCADE"),
+        index=True)
+    config = sa.Column(sa.String, index=True)
+    name = sa.Column(sa.String, index=True)
+    value = sa.Column(sa.Float)
+
+    type = sa.Column(sa.String(8))
+    __mapper_args__ = {
+        'polymorphic_identity': 'program',
+        'polymorphic_on': type
+    }
+
+
+class PJ_Result_Region(schema.BASE):
+    __tablename__ = 'polyjit_region_result'
+    id = sa.Column(
+        sa.Integer,
+        sa.ForeignKey(
+            'polyjit_result.id',
+            primary_key=True,
+            onupdate="CASCADE",
+            ondelete="CASCADE"))
+    region_name = sa.Column(sa.String)
+    __mapper_args__ = {'polymorphic_identity': 'region'}
 
 
 def verbosity_to_polyjit_log_level(verbosity: int):
@@ -79,17 +112,12 @@ class ClearPolyJITConfig(PolyJITConfig, ext.Extension):
         return self.call_next(*args, **kwargs)
 
 
-class CollectMetrics(PolyJITConfig, ext.Extension):
-    def __init__(self, *extensions, project=None, **kwargs):
-        self.project = project
-        super(CollectMetrics, self).__init__(*extensions, **kwargs)
-
-    def metrics_to_db(self, stored_file):
-        if not os.path.exists(stored_file):
-            LOG.error("Could not find the stored metrics.")
-
-        with open(stored_file, 'r') as yaml_out:
-            metrics = yaml.safe_load(yaml_out)
+class PolyJITMetrics(ext.Extension):
+    def evaluate(self, run_info: RunInfo):
+        payload = run_info.payload
+        run_id = run_info.db_run.id
+        config = payload['config']
+        metrics = payload['pj.metrics']
 
         events = {
             e['region-id']: {
@@ -115,7 +143,78 @@ class CollectMetrics(PolyJITConfig, ext.Extension):
             merged[k].update(entries[k])
             merged[k].update(regions[k])
 
-        run_id = metrics['RunID']
+        # T_All
+        # T_SCoPs
+        # T_CodeGen
+        # CacheHits
+        # Variants
+        # Requests
+        # Blocked
+        def yield_by_region(region_name, merged_metrics):
+            for value in merged_metrics.values():
+                if value['region'] == region_name:
+                    yield value['event']
+
+        for time in yield_by_region('START', merged):
+            t_all = PJ_Result(
+                config=config.get('name', default=None),
+                name='t_all',
+                run_id=run_id,
+                value = time)
+
+    def payloads(self, name, results):
+        valid_results = [e for e in results if e.payload and name in e.payload]
+        for result in valid_results:
+            yield result
+
+    def __call__(self, *args, **kwargs):
+        res = self.call_next(*args, **kwargs)
+        for p in self.payloads("pj.metrics", res):
+            self.evaluate(p)
+        return res
+
+
+class CollectMetrics(PolyJITConfig, ext.Extension):
+    def __init__(self, *extensions, project=None, **kwargs):
+        self.project = project
+        super(CollectMetrics, self).__init__(*extensions, **kwargs)
+
+    def add_payload(self, stored_file, run_info):
+        if not os.path.exists(stored_file):
+            LOG.error("Could not find the stored metrics.")
+            return
+
+        run_id = run_info.db_run.id
+
+        with open(stored_file, 'r') as yaml_out:
+            metrics = yaml.safe_load(yaml_out)
+
+        run_info.add_payload("pj.metrics", metrics)
+
+        events = {
+            e['region-id']: {
+                'event': e['value']
+            }
+            for e in metrics['events']
+        }
+        entries = {
+            e['region-id']: {
+                'entry': e['value']
+            }
+            for e in metrics['entries']
+        }
+        regions = {
+            e['region-id']: {
+                'region': e['region-name']
+            }
+            for e in metrics['regions']
+        }
+
+        merged = events
+        for k in events:
+            merged[k].update(entries[k])
+            merged[k].update(regions[k])
+
         session = schema.Session()
         for k, v in merged.items():
             db_insert = __REGIONS__.insert().values({
@@ -128,15 +227,20 @@ class CollectMetrics(PolyJITConfig, ext.Extension):
             session.execute(db_insert)
         session.commit()
 
-    def __call__(self, binary_command, *args, **kwargs):
+    def __call__(self, *args, **kwargs):
         builddir = self.project.builddir
         outfile = 'polyjit.{0}.metadata.yml'.format(self.project.name)
         outfile = os.path.join(os.path.abspath(builddir), outfile)
         pjit_args = ["-polli-track-metrics-outfile='{:s}'".format(outfile)]
         with self.argv(PJIT_ARGS=pjit_args):
-            res = self.call_next(binary_command, *args, **kwargs)
+            res = self.call_next(*args, **kwargs)
 
-        self.metrics_to_db(outfile)
+        # Attach payload to "last" successful RunInfo.
+        valid_runs = [r for r in res if not r.failed]
+        if valid_runs:
+            self.add_payload(outfile, valid_runs[-1])
+        else:
+            LOG.error("No valid run results to attach our results to.")
         return res
 
 
@@ -171,23 +275,9 @@ class EnableJITTracking(PolyJITConfig, ext.Extension):
 
     def __call__(self, binary_command, *args, **kwargs):
         from benchbuild.settings import CFG
-        experiment = self.project.experiment
-        pjit_args = [
-            "-polli-experiment='{:s}'".format(experiment.name),
-            "-polli-experiment-uuid='{:s}'".format(str(experiment.id)),
-            "-polli-argv='{:s}'".format(str(binary_command))
-        ]
+        pjit_args = ["-polli-track"]
 
-        if self.project is not None:
-            pjit_args.extend([
-                "-polli-track",
-                "-polli-project='%s'" % self.project.name,
-                "-polli-domain='%s'" % self.project.domain,
-                "-polli-group='%s'" % self.project.group,
-                "-polli-src-uri='%s'" % self.project.src_file,
-                "-polli-run-group='%s'" % self.project.run_uuid
-            ])
-        else:
+        if self.project is None:
             LOG.error("Project was not set."
                       " Database activation will be invalid.")
 
@@ -323,8 +413,9 @@ class PolyJITSimple(PolyJIT):
         project.runtime_extension = \
             ext.RuntimeExtension(project, self, config=cfg) \
             << EnablePolyJIT() \
-            << CollectMetrics(project=project) \
             << EnableJITTracking(project=project) \
+            << CollectMetrics(project=project) \
+            << PolyJITMetrics() \
             << RegisterPolyJITLogs() \
             << ext.LogAdditionals() \
             << ClearPolyJITConfig() \
