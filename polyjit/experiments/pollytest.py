@@ -8,19 +8,18 @@ import copy
 import logging
 import os
 import uuid
+
 import pandas as pd
-
 import sqlalchemy as sa
-import benchbuild.experiment as exp
-import benchbuild.extensions as ext
-import benchbuild.reports as report
-import benchbuild.statistics as stats
 
+from benchbuild import experiment, reports, statistics
+from benchbuild.extensions import run
+from polyjit.experiments import compilestats
 
 LOG = logging.getLogger(__name__)
 
 
-class PollyTest(exp.Experiment):
+class PollyTest(experiment.Experiment):
     """
     An experiment that executes projects with different configurations.
 
@@ -39,9 +38,9 @@ class PollyTest(exp.Experiment):
             "name": "-O3"
         }
         newp.compiler_extension = \
-            ext.ExtractCompileStats(newp, self, config=cfg) \
-            << ext.RunWithTimeout() \
-            << stats.Statistics(newp, self, config=cfg)
+            compilestats.ExtractCompileStats(newp, self, config=cfg) \
+            << run.WithTimeout() \
+            << statistics.Statistics(newp, self, config=cfg)
         actns.extend(self.default_compiletime_actions(newp))
 
         newp = copy.deepcopy(project)
@@ -51,9 +50,9 @@ class PollyTest(exp.Experiment):
             "name": "-O3 -polly"
         }
         newp.compiler_extension = \
-            ext.ExtractCompileStats(newp, self, config=cfg) \
-            << ext.RunWithTimeout()\
-            << stats.Statistics(newp, self, config=cfg)
+            compilestats.ExtractCompileStats(newp, self, config=cfg) \
+            << run.WithTimeout()\
+            << statistics.Statistics(newp, self, config=cfg)
         actns.extend(self.default_compiletime_actions(newp))
 
         newp = copy.deepcopy(project)
@@ -66,9 +65,9 @@ class PollyTest(exp.Experiment):
             "name": "-O3 -polly -polly-position=before-vectorizer"
         }
         newp.compiler_extension = \
-            ext.ExtractCompileStats(newp, self, config=cfg) \
-            << ext.RunWithTimeout() \
-            << stats.Statistics(newp, self, config=cfg)
+            compilestats.ExtractCompileStats(newp, self, config=cfg) \
+            << run.WithTimeout() \
+            << statistics.Statistics(newp, self, config=cfg)
         actns.extend(self.default_compiletime_actions(newp))
 
         newp = copy.deepcopy(project)
@@ -83,9 +82,9 @@ class PollyTest(exp.Experiment):
                     "-polly-process-unprofitable"
         }
         newp.compiler_extension = \
-            ext.ExtractCompileStats(newp, self, config=cfg) \
-            << ext.RunWithTimeout() \
-            << stats.Statistics(newp, self, config=cfg)
+            compilestats.ExtractCompileStats(newp, self, config=cfg) \
+            << run.WithTimeout() \
+            << statistics.Statistics(newp, self, config=cfg)
         actns.extend(self.default_compiletime_actions(newp))
 
         newp = copy.deepcopy(project)
@@ -98,14 +97,14 @@ class PollyTest(exp.Experiment):
             "name": "-O3 -polly -polly-process-unprofitable"
         }
         newp.compiler_extension = \
-            ext.ExtractCompileStats(newp, self, config=cfg) \
-            << ext.RunWithTimeout() \
-            << stats.Statistics(newp, self, config=cfg)
+            compilestats.ExtractCompileStats(newp, self, config=cfg) \
+            << run.WithTimeout() \
+            << statistics.Statistics(newp, self, config=cfg)
         actns.extend(self.default_compiletime_actions(newp))
         return actns
 
 
-class PollyTestReport(report.Report):
+class PollyTestReport(reports.Report):
     SUPPORTED_EXPERIMENTS = ["pollytest"]
     QUERY_EVAL = \
         sa.sql.select([

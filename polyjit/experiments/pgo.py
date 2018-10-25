@@ -4,14 +4,12 @@ import os
 
 import attr
 import sqlalchemy as sa
-
-import benchbuild.experiment as exp
-import benchbuild.extensions as ext
-import benchbuild.utils.actions as actns
-import benchbuild.utils.schema as schema
-
-from benchbuild.utils.cmd import llvm_profdata
 from plumbum import local
+
+from benchbuild import experiment, extensions
+from benchbuild.utils import actions, schema
+from benchbuild.utils.cmd import llvm_profdata
+from polyjit.experiments import compilestats
 
 LOG = logging.getLogger(__name__)
 
@@ -88,13 +86,13 @@ def extract_file(filename, outfile, exp_id, run_group):
 
 
 @attr.s
-class SaveProfile(actns.Step):
+class SaveProfile(actions.Step):
     NAME = "SAVEPROFILE"
     DESCRIPTION = "Save a profile in llvm format in the DB"
 
     filename = attr.ib(default=None)
 
-    @actns.notify_step_begin_end
+    @actions.notify_step_begin_end
     def __call__(self):
         from benchbuild.project import Project
         if not isinstance(self.obj, Project):
@@ -113,18 +111,18 @@ class SaveProfile(actns.Step):
         run_group = self.obj.run_uuid
 
         persist_file(outfile, exp_id, run_group)
-        self.status = actns.StepResult.OK
+        self.status = actions.StepResult.OK
 
 
 @attr.s
-class RetrieveFile(actns.Step):
+class RetrieveFile(actions.Step):
     NAME = "RETRIEVEFILE"
     DESCRIPTION = "Retrieve a file from the database"
 
     filename = attr.ib(default=None)
     run_group = attr.ib(default=None)
 
-    @actns.notify_step_begin_end
+    @actions.notify_step_begin_end
     def __call__(self):
         from benchbuild.project import Project
 
@@ -136,10 +134,10 @@ class RetrieveFile(actns.Step):
         exp_id = self.obj.experiment.id
         extract_file(self.filename, outfile, exp_id, self.run_group)
 
-        self.status = actns.StepResult.OK
+        self.status = actions.StepResult.OK
 
 
-class PGO(exp.Experiment):
+class PGO(experiment.Experiment):
     """
     Evaluate Luc Forget's implementation of a loop profile tree.
 
@@ -170,10 +168,10 @@ class PGO(exp.Experiment):
         project.cflags += ["-O3", "-fprofile-generate=./raw-profiles"]
         cfg_inst = {"cflags": project.cflags, "name": "inst"}
         project.compiler_extension = \
-            ext.RunWithTimeout(
-                ext.RunCompiler(project, self, config=cfg_inst))
+            extensions.compiler.RunCompiler(project, self, config=cfg_inst) \
+            << extensions.run.WithTimeout()
         project.runtime_extension = \
-            ext.RuntimeExtension(project, self, config=cfg_inst)
+            extensions.run.RuntimeExtension(project, self, config=cfg_inst)
 
         # Still activating pgo for clang pgo optimisation
         no_pgo_project.cflags += [
@@ -182,9 +180,8 @@ class PGO(exp.Experiment):
         ]
         cfg_no_pgo = {"cflags": no_pgo_project.cflags, "name": "no-pgo"}
         no_pgo_project.compiler_extension = \
-            ext.RunWithTimeout(
-                ext.ExtractCompileStats(project, self, config=cfg_no_pgo)
-            )
+            compilestats.ExtractCompileStats(project, self, config=cfg_no_pgo) \
+            << extensions.run.WithTimeout()
 
         pgo_project.cflags += [
             "-O3", "-fprofile-use=./raw-profiles", "-mllvm", "-polly",
@@ -193,41 +190,32 @@ class PGO(exp.Experiment):
         ]
         cfg_pgo = {"cflags": pgo_project.cflags, "name": "pgo"}
         pgo_project.compiler_extension = \
-            ext.RunWithTime(ext.RuntimeExtension(project, self),
-                            config=cfg_pgo)
+            extensions.run.RuntimeExtension(project, self) \
+            << extensions.time.RunWithTime(config=cfg_pgo)
 
-        actions = [
-            actns.RequireAll(actions=[
-                actns.MakeBuildDir(project),
-                actns.Prepare(project),
-                actns.Download(project),
-                actns.Configure(project),
-                actns.Build(project),
-                actns.Run(project),
-                actns.SaveProfile(project, filename='prog.profdata'),
-                actns.Clean(project),
+        actns = [
+            actions.RequireAll(actions=[
+                actions.MakeBuildDir(project),
+                actions.Compile(project),
+                actions.Run(project),
+                SaveProfile(project, filename='prog.profdata'),
+                actions.Clean(project),
             ]),
-            actns.RequireAll(actions=[
-                actns.MakeBuildDir(no_pgo_project),
-                actns.Prepare(no_pgo_project),
-                actns.Download(no_pgo_project),
-                actns.Configure(no_pgo_project),
-                actns.Build(no_pgo_project),
-                actns.Run(no_pgo_project),
-                actns.Clean(no_pgo_project)
+            actions.RequireAll(actions=[
+                actions.MakeBuildDir(no_pgo_project),
+                actions.Compile(no_pgo_project),
+                actions.Run(no_pgo_project),
+                actions.Clean(no_pgo_project)
             ]),
-            actns.RequireAll(actions=[
-                actns.MakeBuildDir(pgo_project),
-                actns.Prepare(pgo_project),
-                actns.Download(pgo_project),
-                actns.Configure(pgo_project),
-                actns.RetrieveFile(
+            actions.RequireAll(actions=[
+                actions.MakeBuildDir(pgo_project),
+                RetrieveFile(
                     pgo_project,
                     filename="prog.profdata",
                     run_group=project.run_uuid),
-                actns.Build(pgo_project),
-                actns.Run(pgo_project),
-                actns.Clean(pgo_project)
+                actions.Compile(pgo_project),
+                actions.Run(pgo_project),
+                actions.Clean(pgo_project)
             ])
         ]
-        return actions
+        return actns

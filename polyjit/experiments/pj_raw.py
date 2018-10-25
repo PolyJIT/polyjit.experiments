@@ -1,10 +1,12 @@
 import copy
 import uuid
-import benchbuild.extensions as ext
-import polyjit.experiments.polyjit as pj
 
+from benchbuild import extensions, settings
+from polyjit.experiments import polyjit
 
-class PJITRaw(pj.PolyJIT):
+CFG = settings.CFG
+
+class PJITRaw(polyjit.PolyJIT):
     """
     An experiment that executes all projects with PolyJIT support.
 
@@ -14,9 +16,8 @@ class PJITRaw(pj.PolyJIT):
     NAME = "pj-raw"
 
     def actions_for_project(self, project):
-        from benchbuild.settings import CFG
 
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
 
         actns = []
         for i in range(2, int(str(CFG["jobs"])) + 1):
@@ -24,20 +25,17 @@ class PJITRaw(pj.PolyJIT):
             cp.run_uuid = uuid.uuid4()
             cp.cflags += ["-mllvm", "-polly-num-threads={0}".format(i)]
             cp.runtime_extension = \
-                ext.LogAdditionals(
-                    pj.RegisterPolyJITLogs(
-                        ext.RunWithTime(
-                            pj.ClearPolyJITConfig(
-                                pj.EnablePolyJIT(
-                                    ext.RuntimeExtension(cp, self, config={
-                                        "jobs": i,
-                                        "cores": str(i-1),
-                                        "cores-config": str(i),
-                                        "recompilation": "enabled"}))
-                            )
-                        )
-                    )
-                )
+                extensions.run.RuntimeExtension(
+                    cp, self, config={
+                        "jobs": i,
+                        "cores": str(i-1),
+                        "cores-config": str(i),
+                        "recompilation": "enabled"}) \
+                << polyjit.EnablePolyJIT() \
+                << polyjit.ClearPolyJITConfig() \
+                << extensions.time.RunWithTime() \
+                << polyjit.RegisterPolyJITLogs() \
+                << extensions.log.LogAdditionals()
 
             actns.extend(self.default_runtime_actions(cp))
         return actns

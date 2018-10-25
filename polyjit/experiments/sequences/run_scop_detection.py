@@ -69,7 +69,7 @@ def __run_scop_detection(program):
             detection should run.
     """
     from benchbuild.settings import CFG
-    sequence = CFG["sequence"].value()
+    sequence = CFG["sequence"].value
     if sequence == 'genetic1':
         passes = O3_PASSES + POLLY_CANONICALIZE_PASSES
         opt_flags = genetic1_opt.generate_custom_sequence(program, passes,

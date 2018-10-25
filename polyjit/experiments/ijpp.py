@@ -16,26 +16,27 @@ import uuid
 
 import sqlalchemy as sa
 
-import polyjit.experiments.papi as papi
-import polyjit.experiments.polyjit as pj
-import benchbuild.extensions as ext
-import benchbuild.reports as reports
-import benchbuild.settings as settings
-import benchbuild.utils.actions as actions
-import benchbuild.utils.schedule_tree as st
-import benchbuild.utils.schema as schema
+from benchbuild import extensions, reports, settings
+from benchbuild.utils import actions
+from benchbuild.utils import schedule_tree as st
+from benchbuild.utils import schema
+from polyjit.experiments import papi, polyjit
 
 LOG = logging.getLogger(__name__)
 
+Extension = extensions.base.Extension
+RuntimeExtension = extensions.run.RuntimeExtension
+RunWithTime = extensions.time.RunWithTime
+LogAdditionals = extensions.log.LogAdditionals
 
-class IJPP(pj.PolyJIT):
+class IJPP(polyjit.PolyJIT):
     """Experiments and evaluation used for IJPP Journal."""
 
     NAME = "ijpp"
     SCHEMA = [papi.Event.__table__]
 
     def actions_for_project(self, project):
-        jobs = int(settings.CFG["jobs"].value())
+        jobs = int(settings.CFG["jobs"].value)
         naked_project = project.clone()
         naked_project.cflags += ["-O3"]
 
@@ -45,105 +46,102 @@ class IJPP(pj.PolyJIT):
             "-polly", "-mllvm", "-polly-parallel", "-fopenmp"
         ]
 
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.cflags += [
             "-mllvm", "-polly-num-threads={0}".format(jobs), "-fopenmp"
         ]
         project.ldflags += ["-lgomp"]
 
-        ext_jit_opt = ext.RuntimeExtension(
+        ext_jit_opt = RuntimeExtension(
             project, self, config={
                 "name": "PolyJIT_Opt",
                 "cores": jobs,
             }) \
-            << pj.EnablePolyJIT_Opt() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.CollectMetrics(project=project) \
-            << pj.PolyJITMetrics() \
-            << pj.RegisterPolyJITLogs() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.EnablePolyJIT_Opt() \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.CollectMetrics(project=project) \
+            << polyjit.PolyJITMetrics() \
+            << polyjit.RegisterPolyJITLogs() \
+            << polyjit.ClearPolyJITConfig()
 
-        ext_jit = ext.RuntimeExtension(
+        ext_jit = RuntimeExtension(
             project, self, config={
                 "name": "PolyJIT",
                 "cores": jobs,
             }) \
-            << pj.EnablePolyJIT() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.CollectMetrics(project=project) \
-            << pj.PolyJITMetrics() \
-            << pj.RegisterPolyJITLogs() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.EnablePolyJIT() \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.CollectMetrics(project=project) \
+            << polyjit.PolyJITMetrics() \
+            << polyjit.RegisterPolyJITLogs() \
+            << polyjit.ClearPolyJITConfig()
 
-        ext_jit_polly = ext.RuntimeExtension(
+        ext_jit_polly = RuntimeExtension(
             project, self, config={
                 "name": "polly.inside",
                 "cores": jobs
             }) \
-            << pj.DisablePolyJIT() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.CollectMetrics(project=project) \
-            << pj.PolyJITMetrics() \
-            << pj.RegisterPolyJITLogs() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.DisablePolyJIT() \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.CollectMetrics(project=project) \
+            << polyjit.PolyJITMetrics() \
+            << polyjit.RegisterPolyJITLogs() \
+            << polyjit.ClearPolyJITConfig()
 
-        ext_jit_no_delin = ext.RuntimeExtension(
+        ext_jit_no_delin = RuntimeExtension(
             project, self, config={
                 "name": "PolyJIT.no-delin",
                 "cores": jobs
             }) \
-            << pj.DisableDelinearization() \
-            << pj.EnablePolyJIT() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.CollectMetrics(project=project) \
-            << pj.PolyJITMetrics() \
-            << pj.RegisterPolyJITLogs() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.DisableDelinearization() \
+            << polyjit.EnablePolyJIT() \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.CollectMetrics(project=project) \
+            << polyjit.PolyJITMetrics() \
+            << polyjit.RegisterPolyJITLogs() \
+            << polyjit.ClearPolyJITConfig()
 
-        ext_jit_polly_no_delin = ext.RuntimeExtension(
+        ext_jit_polly_no_delin = RuntimeExtension(
             project, self, config={
                 "name": "polly.inside.no-delin",
                 "cores": jobs
             }) \
-            << pj.DisableDelinearization() \
-            << pj.DisablePolyJIT() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.CollectMetrics(project=project) \
-            << pj.PolyJITMetrics() \
-            << pj.RegisterPolyJITLogs() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.DisableDelinearization() \
+            << polyjit.DisablePolyJIT() \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.CollectMetrics(project=project) \
+            << polyjit.PolyJITMetrics() \
+            << polyjit.RegisterPolyJITLogs() \
+            << polyjit.ClearPolyJITConfig()
 
         # JIT configurations:
         #   PolyJIT, polly.inside,
         #   PolyJIT_Opt, polly.inside.no-delin
-        project.runtime_extension = ext.Extension(
+        project.runtime_extension = Extension(
             ext_jit_opt, ext_jit, ext_jit_polly, ext_jit_no_delin,
-            ext_jit_polly_no_delin) << ext.RunWithTime()
+            ext_jit_polly_no_delin) << RunWithTime()
 
         # O3
-        naked_project.runtime_extension = ext.RuntimeExtension(
+        naked_project.runtime_extension = RuntimeExtension(
             naked_project, self, config={
                 "name": "o3.naked",
                 "cores": jobs
             }) \
-            << ext.RunWithTime()
+            << RunWithTime()
 
         # Polly
-        naked_polly_project.runtime_extension = ext.RuntimeExtension(
+        naked_polly_project.runtime_extension = RuntimeExtension(
             naked_polly_project, self, config={
                 "name": "polly.naked",
                 "cores": jobs
             }) \
-            << ext.RunWithTime()
+            << RunWithTime()
 
         def ijpp_config(_project, name):
             return actions.RequireAll(actions=[
                 actions.Echo("Stage: JIT Configurations"),
                 actions.MakeBuildDir(_project),
-                actions.Prepare(_project),
-                actions.Download(_project),
-                actions.Configure(_project),
-                actions.Build(_project),
+                actions.Compile(_project),
                 actions.Run(_project),
                 actions.Clean(_project),
                 actions.Echo(name),
@@ -184,7 +182,7 @@ __ISL_AST__ = sa.Table(
         primary_key=True))
 
 
-class EnableDBExport(pj.PolyJITConfig, ext.Extension):
+class EnableDBExport(polyjit.PolyJITConfig, Extension):
     """Call the child extensions with an activated PolyJIT."""
 
     def __call__(self, binary_command, *args, **kwargs):
@@ -196,7 +194,7 @@ class EnableDBExport(pj.PolyJITConfig, ext.Extension):
         return ret
 
 
-class JitExportGeneratedCode(pj.PolyJIT):
+class JitExportGeneratedCode(polyjit.PolyJIT):
     """
     An experiment that executes all projects with PolyJIT support.
 
@@ -207,40 +205,40 @@ class JitExportGeneratedCode(pj.PolyJIT):
     SCHEMA = [__SCHEDULE__, __ISL_AST__, papi.Event.__table__]
 
     def actions_for_project(self, project):
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.run_uuid = uuid.uuid4()
-        jobs = int(settings.CFG["jobs"].value())
+        jobs = int(settings.CFG["jobs"].value)
         project.cflags += [
             "-mllvm", "-stats", "-mllvm", "-polly-num-threads={0}".format(jobs)
         ]
 
         project.ldflags += ["-lgomp"]
 
-        enable_jit = ext.RuntimeExtension(
+        enable_jit = RuntimeExtension(
             project, self, config={
                 "name": "PolyJIT",
                 "cores": jobs
             }) \
-            << pj.EnablePolyJIT() \
+            << polyjit.EnablePolyJIT() \
             << EnableDBExport() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.RegisterPolyJITLogs() \
-            << ext.LogAdditionals() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.RegisterPolyJITLogs() \
+            << LogAdditionals() \
+            << polyjit.ClearPolyJITConfig()
 
-        disable_jit = ext.RuntimeExtension(
+        disable_jit = RuntimeExtension(
             project, self, config={
                 "name": "polly.inside",
                 "cores": jobs
             }) \
-            << pj.DisablePolyJIT() \
+            << polyjit.DisablePolyJIT() \
             << EnableDBExport() \
-            << pj.EnableJITTracking(project=project) \
-            << pj.RegisterPolyJITLogs() \
-            << ext.LogAdditionals() \
-            << pj.ClearPolyJITConfig()
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.RegisterPolyJITLogs() \
+            << LogAdditionals() \
+            << polyjit.ClearPolyJITConfig()
 
-        project.runtime_extension = ext.Extension(enable_jit, disable_jit)
+        project.runtime_extension = Extension(enable_jit, disable_jit)
 
         return JitExportGeneratedCode.default_runtime_actions(project)
 

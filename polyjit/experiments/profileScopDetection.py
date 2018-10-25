@@ -10,14 +10,9 @@ import os
 import sqlalchemy as sa
 from plumbum import local
 
-import benchbuild.experiment as exp
-import polyjit.experiments.polyjit as pj
-import benchbuild.extensions as ext
-import benchbuild.reports as reports
-import benchbuild.utils.schema as schema
-from polyjit.experiments.polyjit import (
-    ClearPolyJITConfig, EnableJITTracking, RegisterPolyJITLogs)
-from benchbuild.extensions import Extension
+from benchbuild import experiment, extensions, reports
+from benchbuild.utils import schema
+from polyjit.experiments import polyjit
 
 LOG = logging.getLogger(__name__)
 
@@ -38,7 +33,6 @@ __PROFILESCOPS__ = sa.Table('profilescops', schema.metadata(),
 
 def persist_scopinfos(run, invalidReason, count):
     """Persists the given information about SCoPs"""
-    from benchbuild.utils import schema as s
     session = run.session
     #FIXME: Missing table 'ScopDetection' in the schema!
     #session.add(
@@ -46,14 +40,14 @@ def persist_scopinfos(run, invalidReason, count):
     #        run_id=run.db_run.id, invalid_reason=invalidReason, count=count))
 
 
-class RunWithPprofExperiment(Extension):
+class RunWithPprofExperiment(extensions.Extension):
     """Write data of profileScopDetection into the database"""
 
     def __call__(self, *args, **kwargs):
         return self.call_next(*args, **kwargs)
 
 
-class EnableProfiling(pj.PolyJITConfig, ext.Extension):
+class EnableProfiling(polyjit.PolyJITConfig):
     """Adds options for enabling profiling of SCoPs"""
 
     def __call__(self, *args, **kwargs):
@@ -64,7 +58,7 @@ class EnableProfiling(pj.PolyJITConfig, ext.Extension):
         return ret
 
 
-class CaptureProfilingDebugOutput(ext.Extension):
+class CaptureProfilingDebugOutput(extensions.Extension):
     """Capture the output of the profiling pass and persist it"""
 
     def __init__(self, *extensions, project=None, experiment=None, **kwargs):
@@ -154,7 +148,7 @@ class CaptureProfilingDebugOutput(ext.Extension):
         return handle_profileScopDetection(res)
 
 
-class PProfExperiment(exp.Experiment):
+class PProfExperiment(experiment.Experiment):
     """This experiment instruments the parent if any given SCoP and prints the
     reason why the parent is not part of the SCoP."""
 
@@ -169,22 +163,22 @@ class PProfExperiment(exp.Experiment):
         ]
         project.ldflags = ["-lpjit", "-lpapi"]
         project.compiler_extension = \
-            ext.RunCompiler(project, self) \
-            << ext.RunWithTimeout(limit="10m") \
+            extensions.compiler.RunCompiler(project, self) \
+            << extensions.run.WithTimeout(limit="10m") \
             << CaptureProfilingDebugOutput(project=project, experiment=self)
 
         project.runtime_extension = \
-            ext.RuntimeExtension(
+            extensions.run.RuntimeExtension(
                 project, self, config={ "jobs": 1,
                                         "name": "profileScopDetection"
                                       }) \
-            << ext.RunWithTime() \
+            << extensions.time.RunWithTime() \
             << RunWithPprofExperiment(config={"jobs": 1}) \
             << EnableProfiling() \
-            << EnableJITTracking(project=project) \
-            << ClearPolyJITConfig() \
-            << RegisterPolyJITLogs() \
-            << ext.LogAdditionals()
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.ClearPolyJITConfig() \
+            << polyjit.RegisterPolyJITLogs() \
+            << extensions.log.LogAdditionals()
         return self.default_runtime_actions(project)
 
 

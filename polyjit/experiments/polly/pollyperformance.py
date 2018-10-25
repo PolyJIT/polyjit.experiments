@@ -6,9 +6,7 @@ import re
 import uuid
 import warnings
 
-import benchbuild.settings as settings
-from benchbuild.experiment import Experiment
-from benchbuild.extensions import RuntimeExtension, RunWithTime
+from benchbuild import experiment, extensions, settings
 
 settings.CFG["perf"] = {
     "config": {
@@ -22,17 +20,19 @@ class ShouldNotBeNone(RuntimeWarning):
     """User warning, if config var is null."""
 
 
-class PollyPerformance(Experiment):
+class PollyPerformance(experiment.Experiment):
     """ The polly performance experiment. """
 
     NAME = "pollyperformance"
 
     def actions_for_project(self, project):
-        configs = settings.CFG["perf"]["config"].value()
+        configs = settings.CFG["perf"]["config"].value
         if configs is None:
-            warnings.warn("({0}) should not be null.".format(
-                repr(settings.CFG["perf"]["config"])),
-                          category=ShouldNotBeNone, stacklevel=2)
+            warnings.warn(
+                "({0}) should not be null.".format(
+                    repr(settings.CFG["perf"]["config"])),
+                category=ShouldNotBeNone,
+                stacklevel=2)
             return
 
         config_list = re.split(r'\s*', configs)
@@ -42,22 +42,21 @@ class PollyPerformance(Experiment):
             config_with_llvm.append("-mllvm")
             config_with_llvm.append(config)
 
-        project.cflags = ["-O3", "-fno-omit-frame-pointer",
-                          "-Xclang", "-load",
-                          "-Xclang", "LLVMPolyJIT.so",
-                          "-mllvm", "-polly"] + config_with_llvm
+        project.cflags = [
+            "-O3", "-fno-omit-frame-pointer", "-Xclang", "-load", "-Xclang",
+            "LLVMPolyJIT.so", "-mllvm", "-polly"
+        ] + config_with_llvm
 
         actns = []
-        jobs = settings.CFG["jobs"].value()
-        for i in range(1, int(jobs)):
-            cp = copy.deepcopy(project)
-            cp.run_uuid = uuid.uuid4()
+        num_jobs = int(settings.CFG["jobs"].value)
+        for i in range(1, num_jobs):
+            project_i = copy.deepcopy(project)
+            project_i.run_uuid = uuid.uuid4()
 
-            cp.cflags += ["-mllvm", "-polly-num-threads={0}".format(i)]
-            cp.runtime_extension = \
-                RunWithTime(
-                    RuntimeExtension(cp, self, {'jobs': i}))
+            project_i.cflags += ["-mllvm", "-polly-num-threads={0}".format(i)]
+            project_i.runtime_extension = extensions.run.RuntimeExtension(
+                project_i, self, {'jobs': i}) << extensions.time.RunWithTime()
 
-            actns.extend(self.default_runtime_actions(cp))
+            actns.extend(self.default_runtime_actions(project_i))
 
         return actns

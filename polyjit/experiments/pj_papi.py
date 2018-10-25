@@ -1,13 +1,16 @@
 import copy
 from functools import partial
 
-import benchbuild.extensions as ext
-import polyjit.experiments.polyjit as pj
-
 from plumbum import local
 
+from benchbuild import extensions, settings
+from benchbuild.utils import db, run
+from polyjit.experiments import compilestats, polyjit
 
-def run_with_papi(project, experiment, config, jobs, run_f, args, **kwargs):
+CFG = settings.CFG
+
+
+def run_with_papi(project, experiment, _, jobs, run_f, args, **kwargs):
     """
     Run the given file with PAPI support.
 
@@ -29,26 +32,21 @@ def run_with_papi(project, experiment, config, jobs, run_f, args, **kwargs):
                 with ::benchbuild.project.wrap_dynamic
             has_stdin: Signals whether we should take care of stdin.
     """
-    from benchbuild.settings import CFG
-    from benchbuild.utils.run import track_execution
-    from benchbuild.utils.db import persist_config
-
-    CFG.update(config)
     project.name = kwargs.get("project_name", project.name)
     run_cmd = local[run_f]
     run_cmd = run_cmd[args]
 
     run_info = None
     with local.env(OMP_NUM_THREADS=jobs):
-        with track_execution(run_cmd, project, experiment) as run:
-            run_info = run()
+        with run.track_execution(run_cmd, project, experiment) as command:
+            run_info = command()
 
-    persist_config(run_info.db_run, run_info.session,
+    db.persist_config(run_info.db_run, run_info.session,
                    {"cores": str(jobs)})
     return run_info
 
 
-class PJITpapi(pj.PolyJIT):
+class PJITpapi(polyjit.PolyJIT):
     """
     Experiment that uses PolyJIT's instrumentation facilities.
 
@@ -86,9 +84,7 @@ class PJITpapi(pj.PolyJIT):
 #        return actions
 
     def actions_for_project(self, project):
-        from benchbuild.settings import CFG
-
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.cflags = ["-mllvm", "-polli-instrument"] + project.cflags
         project.ldflags = project.ldflags + ["-lpprof"]
 
@@ -96,7 +92,7 @@ class PJITpapi(pj.PolyJIT):
         for i in range(1, int(str(CFG["jobs"])) + 1):
             cp = copy.deepcopy(project)
             cp.compiler_extension = \
-                ext.RunWithTimeout(ext.ExtractCompileStats(cp, self))
+                extensions.run.WithTimeout(compilestats.ExtractCompileStats(cp, self))
             cp.runtime_extension = partial(run_with_papi, cp, self, CFG, i)
             actns.extend(self.default_runtime_actions(cp))
 

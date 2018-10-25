@@ -17,31 +17,31 @@ Measurements
 import copy
 import uuid
 
-from benchbuild.experiment import Experiment
-from benchbuild.extensions import RunWithTime, RuntimeExtension
-from benchbuild.settings import CFG
+from benchbuild import experiment, extensions, settings
+
+CFG = settings.CFG
 
 
-class PollyOpenMP(Experiment):
+class PollyOpenMP(experiment.Experiment):
     """Timing experiment with Polly & OpenMP support."""
 
     NAME = "polly-openmp"
 
     def actions_for_project(self, project):
         """Build & Run each project with Polly & OpenMP support."""
-        actns = []
-
         project.ldflags = ["-lgomp"]
         project.cflags = [
-            "-O3", "-Xclang", "-load", "-Xclang", "LLVMPolly.so",
-            "-mllvm", "-polly", "-mllvm", "-polly-parallel"]
+            "-O3", "-Xclang", "-load", "-Xclang", "LLVMPolly.so", "-mllvm",
+            "-polly", "-mllvm", "-polly-parallel"
+        ]
 
-        for i in range(2, int(str(CFG["jobs"])) + 1):
-            cp = copy.deepcopy(project)
-            cp.run_uuid = uuid.uuid4()
-            cp.runtime_extension = \
-                RunWithTime(
-                    RuntimeExtension(cp, self, {'jobs': i}))
-            actns.extend(self.default_runtime_actions(cp))
+        actns = []
+        num_jobs = int(CFG['jobs'].value)
+        for i in range(2, num_jobs + 1):
+            project_i = copy.deepcopy(project)
+            project_i.run_uuid = uuid.uuid4()
+            project_i.runtime_extension = extensions.run.RuntimeExtension(
+                project_i, self, {'jobs': i}) << extensions.time.RunWithTime()
+            actns.extend(self.default_runtime_actions(project_i))
 
         return actns

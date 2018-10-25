@@ -13,18 +13,14 @@ from abc import abstractmethod
 
 import sqlalchemy as sa
 import yaml
-
-import benchbuild.extensions as ext
-import benchbuild.utils.schema as schema
-import polyjit.experiments.papi as papi
-from benchbuild.experiment import Experiment
-from benchbuild.utils.actions import Any, RequireAll
-from benchbuild.utils.dict import ExtensibleDict, extend_as_list
-from benchbuild.utils.run import RunInfo
 from plumbum import local
 
-LOG = logging.getLogger(__name__)
+import benchbuild.extensions as ext
+from benchbuild.experiment import Experiment
+from benchbuild.utils import actions, dict as ext_dict, run, schema
+from polyjit.experiments import papi
 
+LOG = logging.getLogger(__name__)
 
 class PJ_Result(schema.BASE):
     __tablename__ = 'polyjit_result'
@@ -50,7 +46,6 @@ class PJ_Result_Region(PJ_Result):
         sa.Integer,
         sa.ForeignKey(
             'polyjit_result.id',
-            primary_key=True,
             onupdate="CASCADE",
             ondelete="CASCADE"),
         primary_key=True)
@@ -72,9 +67,9 @@ def verbosity_to_polyjit_log_level(verbosity: int):
     return polyjit_log_levels[verbosity]
 
 
-class PolyJITConfig(object):
+class PolyJITConfig(ext.Extension):
     """Object that stores the configuraion of the JIT."""
-    __config = ExtensibleDict(extend_as_list)
+    __config = ext_dict.ExtensibleDict(ext_dict.extend_as_list)
 
     @property
     def argv(self):
@@ -95,10 +90,13 @@ class PolyJITConfig(object):
         return value
 
 
-class ClearPolyJITConfig(PolyJITConfig, ext.Extension):
+class ClearPolyJITConfig(PolyJITConfig):
     def __call__(self, *args, **kwargs):
         self.clear()
         return self.call_next(*args, **kwargs)
+
+    def __str__(self):
+        return "Clear PolyJIT configuration"
 
 
 class PolyJITMetrics(ext.Extension):
@@ -130,7 +128,7 @@ class PolyJITMetrics(ext.Extension):
 
         return merged
 
-    def evaluate(self, run_info: RunInfo):
+    def evaluate(self, run_info: run.RunInfo):
         payload = run_info.payload
         run_id = run_info.db_run.id
         config = payload['config']
@@ -213,8 +211,10 @@ class PolyJITMetrics(ext.Extension):
             self.evaluate(p)
         return res
 
+    def __str__(self):
+        return "Store collected PolyJIT metrics"
 
-class CollectMetrics(PolyJITConfig, ext.Extension):
+class CollectMetrics(PolyJITConfig):
     def __init__(self, *extensions, project=None, **kwargs):
         self.project = project
         super(CollectMetrics, self).__init__(*extensions, **kwargs)
@@ -223,8 +223,6 @@ class CollectMetrics(PolyJITConfig, ext.Extension):
         if not os.path.exists(stored_file):
             LOG.error("Could not find the stored metrics.")
             return
-
-        run_id = run_info.db_run.id
 
         with open(stored_file, 'r') as yaml_out:
             metrics = yaml.safe_load(yaml_out)
@@ -247,8 +245,11 @@ class CollectMetrics(PolyJITConfig, ext.Extension):
             LOG.error("No valid run results to attach our results to.")
         return res
 
+    def __str__(self):
+        return "Collect PolyJIT metrics"
 
-class CollectScopMetadata(PolyJITConfig, ext.Extension):
+
+class CollectScopMetadata(PolyJITConfig):
     def __init__(self, *extensions, project=None, **kwargs):
         self.project = project
         super(CollectScopMetadata, self).__init__(*extensions, **kwargs)
@@ -267,8 +268,11 @@ class CollectScopMetadata(PolyJITConfig, ext.Extension):
         # TODO
         return res
 
+    def __str__(self):
+        return "Collect SCoP metadata PolyJIT metrics"
 
-class EnableJITTracking(PolyJITConfig, ext.Extension):
+
+class EnableJITTracking(PolyJITConfig):
     """The run and given extensions store polli's statistics to the database."""
 
     def __init__(self, *args, project=None, **kwargs):
@@ -287,8 +291,11 @@ class EnableJITTracking(PolyJITConfig, ext.Extension):
         with self.argv(PJIT_ARGS=pjit_args):
             return self.call_next(binary_command, *args, **kwargs)
 
+    def __str__(self):
+        return "Enable tracking for PolyJIT"
 
-class EnablePolyJIT_Opt(PolyJITConfig, ext.Extension):
+
+class EnablePolyJIT_Opt(PolyJITConfig):
     """Call the child extensions with an activated PolyJIT."""
 
     def __call__(self, *args, **kwargs):
@@ -298,8 +305,10 @@ class EnablePolyJIT_Opt(PolyJITConfig, ext.Extension):
                 ret = self.call_next(*args, **kwargs)
         return ret
 
+    def __str__(self):
+        return "Enable runtime optimizer"
 
-class EnablePolyJIT(PolyJITConfig, ext.Extension):
+class EnablePolyJIT(PolyJITConfig):
     """Call the child extensions with an activated PolyJIT."""
 
     def __call__(self, *args, **kwargs):
@@ -308,8 +317,11 @@ class EnablePolyJIT(PolyJITConfig, ext.Extension):
             ret = self.call_next(*args, **kwargs)
         return ret
 
+    def __str__(self):
+        return "Enable PolyJIT"
 
-class DisableDelinearization(PolyJITConfig, ext.Extension):
+
+class DisableDelinearization(PolyJITConfig):
     """Deactivate the JIT for the following extensions."""
 
     def __call__(self, *args, **kwargs):
@@ -319,8 +331,10 @@ class DisableDelinearization(PolyJITConfig, ext.Extension):
                 ret = self.call_next(*args, **kwargs)
         return ret
 
+    def __str__(self):
+        return "Disable delinearization"
 
-class DisablePolyJIT(PolyJITConfig, ext.Extension):
+class DisablePolyJIT(PolyJITConfig):
     """Deactivate the JIT for the following extensions."""
 
     def __call__(self, *args, **kwargs):
@@ -330,15 +344,17 @@ class DisablePolyJIT(PolyJITConfig, ext.Extension):
                 ret = self.call_next(*args, **kwargs)
         return ret
 
+    def __str__(self):
+        return "Disable PolyJIT"
 
-class RegisterPolyJITLogs(PolyJITConfig, ext.LogTrackingMixin, ext.Extension):
+class RegisterPolyJITLogs(PolyJITConfig, ext.log.LogTrackingMixin):
     """Extends the following RunWithTime extensions with extra PolyJIT logs."""
 
     def __call__(self, *args, **kwargs):
         """Redirect to RunWithTime, but register additional logs."""
         from benchbuild.settings import CFG
 
-        log_level = verbosity_to_polyjit_log_level(CFG["verbosity"].value())
+        log_level = verbosity_to_polyjit_log_level(CFG["verbosity"].value)
 
         curdir = os.path.realpath(os.path.curdir)
         files_before = glob.glob(os.path.join(curdir, "polyjit.*.log"))
@@ -357,6 +373,8 @@ class RegisterPolyJITLogs(PolyJITConfig, ext.LogTrackingMixin, ext.Extension):
 
         return ret
 
+    def __str__(self):
+        return "Register PolyJIT logfiles"
 
 class PolyJIT(Experiment):
     """The polyjit experiment."""
@@ -400,7 +418,7 @@ class PolyJITSimple(PolyJIT):
 
         project = PolyJIT.init_project(project)
         project.run_uuid = uuid.uuid4()
-        log_level = verbosity_to_polyjit_log_level(CFG["verbosity"].value())
+        log_level = verbosity_to_polyjit_log_level(CFG["verbosity"].value)
 
         project.cflags += [
             "-mllvm", "-polli-log-level={}".format(log_level), "-mllvm",
@@ -414,15 +432,15 @@ class PolyJITSimple(PolyJIT):
         }
 
         project.runtime_extension = \
-            ext.RuntimeExtension(project, self, config=cfg) \
+            ext.run.RuntimeExtension(project, self, config=cfg) \
             << EnablePolyJIT() \
             << EnableJITTracking(project=project) \
             << CollectMetrics(project=project) \
             << PolyJITMetrics() \
             << RegisterPolyJITLogs() \
-            << ext.LogAdditionals() \
+            << ext.log.LogAdditionals() \
             << ClearPolyJITConfig() \
-            << ext.RunWithTime()
+            << ext.time.RunWithTime()
 
         return PolyJITSimple.default_runtime_actions(project)
 
@@ -446,11 +464,11 @@ class PolyJITFull(PolyJIT):
         rawp = copy.deepcopy(project)
         rawp.run_uuid = uuid.uuid4()
         rawp.runtime_extension = \
-            ext.RuntimeExtension(
+            ext.run.RuntimeExtension(
                 rawp, self, config={"jobs": 1, "name": "Baseline O3"}) \
-            << ext.SetThreadLimit(config={"jobs": 1}) \
-            << ext.RunWithTime()
-        actns.append(RequireAll(self.default_runtime_actions(rawp)))
+            << ext.run.SetThreadLimit(config={"jobs": 1}) \
+            << ext.time.RunWithTime()
+        actns.append(actions.RequireAll(self.default_runtime_actions(rawp)))
 
         pollyp = copy.deepcopy(project)
         pollyp.run_uuid = uuid.uuid4()
@@ -459,11 +477,11 @@ class PolyJITFull(PolyJIT):
             "-mllvm", "-polly-parallel"
         ]
         pollyp.runtime_extension = \
-            ext.RuntimeExtension(
+            ext.run.RuntimeExtension(
                 pollyp, self, config={"jobs": 1, "name": "Polly (Parallel)"}) \
-            << ext.SetThreadLimit(config={"jobs": 1}) \
-            << ext.RunWithTime()
-        actns.append(RequireAll(self.default_runtime_actions(pollyp)))
+            << ext.run.SetThreadLimit(config={"jobs": 1}) \
+            << ext.time.RunWithTime()
+        actns.append(actions.RequireAll(self.default_runtime_actions(pollyp)))
 
         jitp = copy.deepcopy(project)
         jitp = PolyJIT.init_project(jitp)
@@ -482,15 +500,15 @@ class PolyJITFull(PolyJIT):
             }
 
             cp.runtime_extension = \
-                ext.RuntimeExtension(cp, self, config=cfg) \
-                << ext.SetThreadLimit(config=cfg) \
+                ext.run.RuntimeExtension(cp, self, config=cfg) \
+                << ext.run.SetThreadLimit(config=cfg) \
                 << DisablePolyJIT() \
                 << EnableJITTracking(project=cp) \
                 << ClearPolyJITConfig() \
-                << ext.RunWithTime() \
+                << ext.time.RunWithTime() \
                 << RegisterPolyJITLogs() \
-                << ext.LogAdditionals()
-            actns.append(RequireAll(self.default_runtime_actions(cp)))
+                << ext.log.LogAdditionals()
+            actns.append(actions.RequireAll(self.default_runtime_actions(cp)))
 
         for i in range(2, int(str(CFG["jobs"])) + 1):
             cp = copy.deepcopy(jitp)
@@ -504,13 +522,13 @@ class PolyJITFull(PolyJIT):
             }
 
             cp.runtime_extension = \
-                ext.RuntimeExtension(cp, self, config=cfg) \
-                << ext.SetThreadLimit(config=cfg) \
+                ext.run.RuntimeExtension(cp, self, config=cfg) \
+                << ext.run.SetThreadLimit(config=cfg) \
                 << EnablePolyJIT() \
                 << EnableJITTracking(project=cp) \
                 << ClearPolyJITConfig() \
                 << RegisterPolyJITLogs() \
-                << ext.LogAdditionals()
-            actns.append(RequireAll(self.default_runtime_actions(cp)))
+                << ext.log.LogAdditionals()
+            actns.append(actions.RequireAll(self.default_runtime_actions(cp)))
 
-        return [Any(actions=actns)]
+        return [actions.Any(actions=actns)]

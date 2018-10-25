@@ -1,9 +1,13 @@
 from functools import partial
 
-import polyjit.experiments.polyjit as pj
+from benchbuild import settings
+from benchbuild.utils import run
+from polyjit.experiments import polyjit
+
+CFG = settings.CFG
 
 
-class PJITRegression(pj.PolyJIT):
+class PJITRegression(polyjit.PolyJIT):
     """
     This experiment will generate a series of regression tests.
 
@@ -18,19 +22,14 @@ class PJITRegression(pj.PolyJIT):
     NAME = "pj-collect"
 
     def actions_for_project(self, project):
-        from benchbuild.settings import CFG
-        from benchbuild.utils.run import track_execution
 
-        def _track_compilestats(project, experiment, config, clang):
+        def _track_compilestats(project, experiment, _, clang):
             """Compile the project and track the compilestats."""
-            from benchbuild.settings import CFG
-
-            CFG.update(config)
             clang = clang["-mllvm", "-polli-collect-modules"]
-            with track_execution(clang, project, experiment) as run:
-                run()
+            with run.track_execution(clang, project, experiment) as command:
+                command()
 
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.cflags = ["-DLIKWID_PERFMON"] + project.cflags
         project.compiler_extension = partial(_track_compilestats,
                                              project, self, CFG)

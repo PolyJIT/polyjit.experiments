@@ -1,16 +1,15 @@
-import benchbuild.extensions as ext
-import polyjit.experiments.compilestats as cs
-import polyjit.experiments.polyjit as pj
+from benchbuild.extensions import run
+from polyjit.experiments import compilestats, polyjit
 
 
-class Compilestats(pj.PolyJIT):
+class Compilestats(polyjit.PolyJIT):
     """Gather compilestats, with enabled JIT."""
 
     NAME = "pj-cs"
-    SCHEMA = [cs.CompileStat.__table__]
+    SCHEMA = [compilestats.CompileStat.__table__]
 
     def actions_for_project(self, project):
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.compiler_extension = \
-            ext.RunWithTimeout(ext.ExtractCompileStats(project, self))
+            run.WithTimeout(compilestats.ExtractCompileStats(project, self))
         return self.default_compiletime_actions(project)

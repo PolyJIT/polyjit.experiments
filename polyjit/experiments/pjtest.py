@@ -12,16 +12,13 @@ import logging
 import os
 import uuid
 
-import polyjit.experiments.papi as papi
-import polyjit.experiments.polyjit as pj
-import benchbuild.extensions as ext
-import benchbuild.reports as reports
-import benchbuild.settings as settings
+from benchbuild import extensions, reports, settings
+from polyjit.experiments import papi, polyjit
 
+CFG = settings.CFG
 LOG = logging.getLogger(__name__)
 
-
-class Test(pj.PolyJIT):
+class Test(polyjit.PolyJIT):
     """
     An experiment that executes all projects with PolyJIT support.
 
@@ -31,9 +28,9 @@ class Test(pj.PolyJIT):
     NAME = "pj-test"
 
     def actions_for_project(self, project):
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.run_uuid = uuid.uuid4()
-        jobs = int(settings.CFG["jobs"].value())
+        jobs = int(settings.CFG["jobs"].value)
         project.cflags += [
             "-mllvm", "-stats", "-mllvm", "-polly-num-threads={0}".format(jobs)
         ]
@@ -56,26 +53,26 @@ class Test(pj.PolyJIT):
             "specialization": "disabled"
         }
 
-        pjit_extension = ext.Extension(
-                ext.RuntimeExtension(project, self, config=cfg_with_jit) \
-                << pj.EnablePolyJIT() \
-                << pj.EnableJITTracking(project=project) \
-                << pj.RegisterPolyJITLogs() \
-                << ext.LogAdditionals() \
-                << pj.ClearPolyJITConfig(),
-                ext.RuntimeExtension(project, self, config=cfg_without_jit) \
-                << pj.DisablePolyJIT() \
-                << pj.EnableJITTracking(project=project) \
-                << pj.RegisterPolyJITLogs() \
-                << ext.LogAdditionals() \
-                << pj.ClearPolyJITConfig()
+        pjit_extension = extensions.Extension(
+                extensions.run.RuntimeExtension(project, self, config=cfg_with_jit) \
+                << polyjit.EnablePolyJIT() \
+                << polyjit.EnableJITTracking(project=project) \
+                << polyjit.RegisterPolyJITLogs() \
+                << extensions.log.LogAdditionals() \
+                << polyjit.ClearPolyJITConfig(),
+                extensions.run.RuntimeExtension(project, self, config=cfg_without_jit) \
+                << polyjit.DisablePolyJIT() \
+                << polyjit.EnableJITTracking(project=project) \
+                << polyjit.RegisterPolyJITLogs() \
+                << extensions.log.LogAdditionals() \
+                << polyjit.ClearPolyJITConfig()
         )
 
-        project.runtime_extension = ext.RunWithTime(pjit_extension)
+        project.runtime_extension = extensions.time.RunWithTime(pjit_extension)
         return Test.default_runtime_actions(project)
 
 
-class EnableDBExport(pj.PolyJITConfig, ext.Extension):
+class EnableDBExport(polyjit.PolyJITConfig):
     """Call the child extensions with an activated PolyJIT."""
 
     def __call__(self, binary_command, *args, **kwargs):
@@ -87,7 +84,7 @@ class EnableDBExport(pj.PolyJITConfig, ext.Extension):
         return ret
 
 
-class JitExportGeneratedCode(pj.PolyJIT):
+class JitExportGeneratedCode(polyjit.PolyJIT):
     """
     An experiment that executes all projects with PolyJIT support.
 
@@ -98,9 +95,9 @@ class JitExportGeneratedCode(pj.PolyJIT):
     SCHEMA = [papi.Event.__table__]
 
     def actions_for_project(self, project):
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
         project.run_uuid = uuid.uuid4()
-        jobs = int(settings.CFG["jobs"].value())
+        jobs = int(settings.CFG["jobs"].value)
         project.cflags += [
             "-Rpass-missed=polli*", "-mllvm", "-stats", "-mllvm",
             "-polly-num-threads={0}".format(jobs)
@@ -124,25 +121,25 @@ class JitExportGeneratedCode(pj.PolyJIT):
             "specialization": "disabled"
         }
 
-        jit = ext.RuntimeExtension(project, self, config=cfg_with_jit)
-        enable_jit = pj.EnablePolyJIT(jit)
+        jit = extensions.run.RuntimeExtension(project, self, config=cfg_with_jit)
+        enable_jit = polyjit.EnablePolyJIT(jit)
 
-        no_jit = ext.RuntimeExtension(project, self, config=cfg_without_jit)
-        disable_jit = pj.EnablePolyJIT(no_jit)
+        no_jit = extensions.run.RuntimeExtension(project, self, config=cfg_without_jit)
+        disable_jit = polyjit.EnablePolyJIT(no_jit)
 
-        pjit_extension = ext.Extension(
-            pj.ClearPolyJITConfig(
-                ext.LogAdditionals(
-                    pj.RegisterPolyJITLogs(
-                        pj.EnableJITTracking(
-                            EnableDBExport(enable_jit), project=project)))),
-            pj.ClearPolyJITConfig(
-                ext.LogAdditionals(
-                    pj.RegisterPolyJITLogs(
-                        pj.EnableJITTracking(
-                            EnableDBExport(disable_jit), project=project)))))
+        pjit_extension = extensions.Extension(
+            EnableDBExport(enable_jit) \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.RegisterPolyJITLogs() \
+            << extensions.log.LogAdditionals() \
+            << polyjit.ClearPolyJITConfig(),
+            EnableDBExport(disable_jit) \
+            << polyjit.EnableJITTracking(project=project) \
+            << polyjit.RegisterPolyJITLogs() \
+            << extensions.log.LogAdditionals() \
+            << polyjit.ClearPolyJITConfig())
 
-        project.runtime_extension = ext.RunWithTime(pjit_extension)
+        project.runtime_extension = extensions.time.RunWithTime(pjit_extension)
         return JitExportGeneratedCode.default_runtime_actions(project)
 
 

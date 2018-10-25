@@ -1,12 +1,17 @@
 """DEPRECATED."""
 import copy
 import functools as ft
-import os
 import uuid
 
 from plumbum import local
 
-import polyjit.experiments.polyjit as pj
+from benchbuild import settings
+from benchbuild.utils import run
+from benchbuild.utils.cmd import perf
+from polyjit.experiments import polyjit
+
+CFG = settings.CFG
+
 
 def run_with_perf(project, experiment, config, jobs, run_f, args, **kwargs):
     """
@@ -27,20 +32,14 @@ def run_with_perf(project, experiment, config, jobs, run_f, args, **kwargs):
                 with ::benchbuild.project.wrap_dynamic
             has_stdin: Signals whether we should take care of stdin.
     """
-    from benchbuild.settings import CFG
-    from benchbuild.utils.run import track_execution
-    from benchbuild.utils.db import persist_perf, persist_config
-    from benchbuild.utils.cmd import perf
-
-    CFG.update(config)
     project.name = kwargs.get("project_name", project.name)
     run_cmd = local[run_f]
     run_cmd = run_cmd[args]
     run_cmd = perf["record", "-q", "-F", 6249, "-g", run_cmd]
 
     with local.env(OMP_NUM_THREADS=str(jobs)):
-        with track_execution(run_cmd, project, experiment) as run:
-            ri = run(retcode=None)
+        with run.track_execution(run_cmd, project, experiment) as command:
+            command(retcode=None)
 
         #fg_path = os.path.join(CFG["src_dir"], "extern/FlameGraph")
         #if os.path.exists(fg_path):
@@ -56,15 +55,13 @@ def run_with_perf(project, experiment, config, jobs, run_f, args, **kwargs):
         #    persist_config(ri.db_run, ri.session, {"cores": str(jobs)})
 
 
-class PJITperf(pj.PolyJIT):
+class PJITperf(polyjit.PolyJIT):
     """An experiment that uses linux perf tools to generate flamegraphs."""
 
     NAME = "pj-perf"
 
     def actions_for_project(self, project):
-        from benchbuild.settings import CFG
-
-        project = pj.PolyJIT.init_project(project)
+        project = polyjit.PolyJIT.init_project(project)
 
         actns = []
         for i in range(1, int(str(CFG["jobs"])) + 1):

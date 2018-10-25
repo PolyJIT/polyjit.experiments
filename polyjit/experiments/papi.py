@@ -7,18 +7,18 @@ project with libbenchbuild support to work.
 """
 import sqlalchemy as sa
 
-import benchbuild.extensions as ext
-import benchbuild.utils.schema as schema
 from benchbuild.experiment import Experiment
-from benchbuild.utils.actions import Step
+from benchbuild.extensions import run, time
+from benchbuild.utils import actions, schema
+from polyjit.experiments import compilestats
 
 
-class Calibrate(Step):
+class Calibrate(actions.Step):
     NAME = "CALIBRATE"
     DESCRIPTION = "Calibrate libpapi measurement functions."
 
 
-class Analyze(Step):
+class Analyze(actions.Step):
     NAME = "ANALYZE"
     DESCRIPTION = "Analyze the experiment after completion."
 
@@ -49,12 +49,6 @@ class PapiScopCoverage(Experiment):
     NAME = "papi"
     SCHEMA = [Event.__table__]
 
-    def actions(self):
-        """Do the postprocessing, after all projects are done."""
-        actions = super(PapiScopCoverage, self).actions()
-
-        return actions
-
     def actions_for_project(self, project):
         """
         Create & Run a papi-instrumented version of the project.
@@ -69,10 +63,10 @@ class PapiScopCoverage(Experiment):
             "-polli-no-recompilation", "-mllvm", "-polly-detect-keep-going"
         ]
         project.compiler_extension = \
-            ext.RunWithTimeout(ext.ExtractCompileStats(project, self))
+            time.RunWithTime(compilestats.ExtractCompileStats(project, self))
         project.runtime_extension = \
-            ext.RunWithTime(
-                ext.RuntimeExtension(project, self, config={'jobs': 1}))
+            time.RunWithTime(
+                run.RuntimeExtension(project, self, config={'jobs': 1}))
 
         def evaluate_calibration(e):
             from benchbuild.utils.cmd import pprof_calibrate
@@ -104,10 +98,10 @@ class PapiStandardScopCoverage(PapiScopCoverage):
             "-polli-no-recompilation", "-mllvm", "-polly-detect-keep-going"
         ]
         project.compiler_extension = \
-            ext.RunWithTimeout(ext.ExtractCompileStats(project, self))
+            run.WithTimeout(compilestats.ExtractCompileStats(project, self))
         project.runtime_extension = \
-            ext.RunWithTime(
-                ext.RuntimeExtension(project, self, config={'jobs': 1}))
+            time.RunWithTime(
+                run.RuntimeExtension(project, self, config={'jobs': 1}))
 
         def evaluate_calibration(e):
             from benchbuild.utils.cmd import pprof_calibrate

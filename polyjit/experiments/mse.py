@@ -7,16 +7,15 @@ Nicholas Bonfante (implemented in LLVM/Polly).
 import csv
 import logging
 import os
-import benchbuild.extensions as ext
-
-from benchbuild.experiment import Experiment
-from benchbuild.utils.run import fetch_time_output
-from benchbuild.settings import CFG
-from benchbuild.reports import Report
 
 import sqlalchemy as sa
 
+from benchbuild import experiment, extensions, reports, settings
+from benchbuild.utils import schema
+from benchbuild.utils.cmd import time
+from polyjit.experiments import compilestats
 
+CFG = settings.CFG
 LOG = logging.getLogger(__name__)
 
 
@@ -29,40 +28,36 @@ def mse_persist_time_and_memory(run, session, timings):
         session: The db transaction we belong to.
         timings: The timing measurements we want to store.
     """
-    from benchbuild.utils import schema as s
 
     for timing in timings:
-        session.add(s.Metric(name="time.user_s",
-                             value=timing[0],
-                             run_id=run.id))
-        session.add(s.Metric(name="time.system_s",
-                             value=timing[1],
-                             run_id=run.id))
-        session.add(s.Metric(name="time.real_s",
-                             value=timing[2],
-                             run_id=run.id))
-        session.add(s.Metric(name="time.rss",
-                             value=timing[3],
-                             run_id=run.id))
+        session.add(schema.Metric(name="time.user_s",
+                                  value=timing[0],
+                                  run_id=run.id))
+        session.add(schema.Metric(name="time.system_s",
+                                  value=timing[1],
+                                  run_id=run.id))
+        session.add(schema.Metric(name="time.real_s",
+                                  value=timing[2],
+                                  run_id=run.id))
+        session.add(schema.Metric(name="time.rss",
+                                  value=timing[3],
+                                  run_id=run.id))
 
 
-class MeasureTimeAndMemory(ext.Extension):
+class MeasureTimeAndMemory(extensions.base.Extension):
     """Wrap a command with time and store the timings in the database."""
     def __call__(self, binary_command, *args, may_wrap=True, **kwargs):
-        from benchbuild.utils.cmd import time
         time_tag = "BENCHBUILD: "
         if may_wrap:
             run_cmd = time["-f", time_tag + "%U-%S-%e-%M", binary_command]
 
         def handle_timing(run_infos):
             """Takes care of the formating for the timing statistics."""
-            from benchbuild.utils import schema as s
-
-            session = s.Session()
+            session = schema.Session()
             for run_info in run_infos:
                 LOG.debug("Persisting time for '%s'", run_info)
                 if may_wrap:
-                    timings = fetch_time_output(
+                    timings = time.fetch_time_output(
                         time_tag,
                         time_tag + "{:g}-{:g}-{:g}-{:g}",
                         run_info.stderr.split("\n"))
@@ -78,7 +73,7 @@ class MeasureTimeAndMemory(ext.Extension):
         return handle_timing(res)
 
 
-class PollyMSE(Experiment):
+class PollyMSE(experiment.Experiment):
     """The polly experiment."""
 
     NAME = "polly-mse"
@@ -95,17 +90,17 @@ class PollyMSE(Experiment):
             "-mllvm", "-polly-enable-delicm=0",
         ]
         project.compiler_extension = \
-            ext.RunWithTimeout(ext.ExtractCompileStats(project, self))
+            extensions.run.WithTimeout(compilestats.ExtractCompileStats(project, self))
         project.runtime_extension = \
             MeasureTimeAndMemory(
-                ext.RuntimeExtension(project, self,
+                extensions.run.RuntimeExtension(project, self,
                                      config={
-                                         'jobs': int(CFG["jobs"].value())}))
+                                         'jobs': int(CFG["jobs"].value)}))
 
         return self.default_runtime_actions(project)
 
 
-class PollyMSEReport(Report):
+class PollyMSEReport(reports.Report):
     NAME = "polly-mse"
     SUPPORTED_EXPERIMENTS = ["polly-mse"]
 

@@ -4,13 +4,16 @@ import uuid
 import plumbum as pb
 import sqlalchemy as sa
 
-import polyjit.experiments.polyjit as pj
-import benchbuild.extensions as ext
-import benchbuild.utils.schema as schema
-from benchbuild.utils.actions import RequireAll
+from benchbuild import extensions as ext
+from benchbuild import likwid, settings
+from benchbuild.utils import actions, db, schema
+from benchbuild.utils.cmd import likwid_perfctr, rm
+from polyjit.experiments import polyjit as pj
+
+CFG = settings.CFG
 
 
-class RunWithLikwid(ext.RuntimeExtension):
+class RunWithLikwid(ext.run.RuntimeExtension):
     """
     Run the given file wrapped by likwid.
 
@@ -31,15 +34,9 @@ class RunWithLikwid(ext.RuntimeExtension):
     """
 
     def __call__(self, binary_command, *args, may_wrap=True, **kwargs):
-        from benchbuild.utils.db import persist_config
-        from benchbuild.likwid import get_likwid_perfctr
-        from benchbuild.utils.cmd import rm
-        from benchbuild.utils.cmd import likwid_perfctr
-
         self.project.name = kwargs.get("project_name", self.project.name)
 
         likwid_f = self.project.name + ".txt"
-
         jobs = self.config['jobs']
         res = []
         for group in ["CLOCK"]:
@@ -51,11 +48,11 @@ class RunWithLikwid(ext.RuntimeExtension):
             with pb.local.env(POLLI_ENABLE_LIKWID=1):
                 res.extend(self.call_next(run_cmd, *args, **kwargs))
 
-            likwid_measurement = get_likwid_perfctr(likwid_f)
+            likwid_measurement = likwid.perfcounters(likwid_f)
             for run_info in res:
                 persist_likwid(run_info.db_run, run_info.session,
                                likwid_measurement)
-                persist_config(run_info.db_run, run_info.session, {
+                db.persist_config(run_info.db_run, run_info.session, {
                     "cores": str(jobs),
                     "likwid.group": group
                 })
@@ -86,8 +83,6 @@ def persist_likwid(run, session, measurements):
         session: The db transaction we belong to.
         measurements: The likwid measurements we want to store.
     """
-    from benchbuild.utils import schema as s
-
     for (region, name, core, value) in measurements:
         db_measurement = Likwid(
             metric=name, region=region, value=value, core=core, run_id=run.id)
@@ -108,8 +103,6 @@ class PJITlikwid(pj.PolyJIT):
     SCHEMA = [Likwid.__table__]
 
     def actions_for_project(self, project):
-        from benchbuild.settings import CFG
-
         project = pj.PolyJIT.init_project(project)
         project.cflags = ["-DLIKWID_PERFMON"] + project.cflags
 
@@ -120,8 +113,8 @@ class PJITlikwid(pj.PolyJIT):
             cp.runtime_extension = \
                 RunWithLikwid(
                     cp, self,
-                    ext.RuntimeExtension(cp, self, config={'jobs': i}),
+                    ext.run.RuntimeExtension(cp, self, config={'jobs': i}),
                     config={'jobs': i})
 
-            actns.append(RequireAll(self.default_runtime_actions(cp)))
+            actns.append(actions.RequireAll(self.default_runtime_actions(cp)))
         return actns

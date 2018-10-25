@@ -15,28 +15,27 @@ Measurements
     time.real_s - The time spent overall in seconds (aka Wall clock)
 """
 
-from benchbuild.experiment import Experiment
-from benchbuild.extensions import RunWithTime, RuntimeExtension
-from benchbuild.settings import CFG
+from benchbuild import experiment, extensions, settings
+
+CFG = settings.CFG
 
 
-class PollyOpenMPVectorizer(Experiment):
+class PollyOpenMPVectorizer(experiment.Experiment):
     """Timing experiment with Polly & OpenMP+Vectorizer support."""
 
     NAME = "polly-openmpvect"
 
     def actions_for_project(self, project):
         """Compile & Run the experiment with -O3 enabled."""
-        project.cflags = ["-O3", "-fno-omit-frame-pointer",
-                          "-Xclang", "-load",
-                          "-Xclang", "LLVMPolly.so",
-                          "-mllvm", "-polly",
-                          "-mllvm", "-polly-parallel",
-                          "-mllvm", "-polly-vectorizer=stripmine"]
+        project.cflags = [
+            "-O3", "-fno-omit-frame-pointer", "-Xclang", "-load", "-Xclang",
+            "LLVMPolly.so", "-mllvm", "-polly", "-mllvm", "-polly-parallel",
+            "-mllvm", "-polly-vectorizer=stripmine"
+        ]
         project.ldflags = ["-lgomp"]
-        project.runtime_extension = \
-            RunWithTime(
-                RuntimeExtension(project, self,
-                                 {'jobs': int(CFG["jobs"].value())}))
+        num_jobs = int(CFG['jobs'].value)
+        project.runtime_extension = extensions.run.RuntimeExtension(
+            project, self,
+            {'jobs': num_jobs}) << extensions.time.RunWithTime()
 
         return self.default_runtime_actions(project)
